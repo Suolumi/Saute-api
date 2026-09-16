@@ -201,8 +201,18 @@ func validateRecipe(recipe *models.RecipeDB) error {
 		ingredient.Name = strings.TrimSpace(ingredient.Name)
 		ingredient.Unit = strings.TrimSpace(ingredient.Unit)
 		ingredient.Label = strings.TrimSpace(ingredient.Label)
-		if ingredient.Name == "" || len([]rune(ingredient.Name)) > maxIngredientFieldLength ||
-			len([]rune(ingredient.Unit)) > maxIngredientFieldLength || len([]rune(ingredient.Label)) > maxIngredientFieldLength {
+		ingredient.RefLabel = strings.TrimSpace(ingredient.RefLabel)
+		if ingredient.RecipeRef != nil {
+			// A reference ingredient carries no free-text name - see the
+			// RecipeRef doc comment on models.Ingredient.
+			ingredient.Name = ""
+		} else {
+			ingredient.RefLabel = ""
+		}
+		if (ingredient.RecipeRef == nil && ingredient.Name == "") ||
+			len([]rune(ingredient.Name)) > maxIngredientFieldLength ||
+			len([]rune(ingredient.Unit)) > maxIngredientFieldLength || len([]rune(ingredient.Label)) > maxIngredientFieldLength ||
+			len([]rune(ingredient.RefLabel)) > maxIngredientFieldLength {
 			return fmt.Errorf("%w: invalid ingredient at index %d", ErrInvalid, i)
 		}
 		if ingredient.Quantity < 0 {
