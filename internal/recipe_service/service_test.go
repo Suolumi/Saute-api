@@ -40,9 +40,12 @@ type fakeStore struct {
 	repointVariationsFn         func(oldRootID, newRootID string) error
 	promoteRecipeToRootFn       func(id string) error
 	getVariationCountsFn        func(rootIDs []string) (map[string]int64, error)
+	setVariationOfFn            func(recipeID, rootID string) error
 	repointRecipeReferencesFn   func(oldRootID, newRootID string) error
 	hasIncomingReferencesFn     func(recipeID string) (bool, error)
+	familyReferencesRecipeFn    func(familyRootID, targetID string) (bool, error)
 	getRecipeTitlesFn           func(ids []string) (map[string]string, error)
+	getUsersByIDsFn             func(ids []string) (map[string]models.UserView, error)
 	// callOrder records, in order, the names of RepointVariations/
 	// PromoteRecipeToRoot/DeleteRecipeById calls - used to assert promotion
 	// happens strictly before the delete.
@@ -142,6 +145,18 @@ func (f *fakeStore) GetVariationCounts(_ context.Context, rootIDs []string) (map
 	}
 	return map[string]int64{}, nil
 }
+func (f *fakeStore) SetVariationOf(_ context.Context, recipeID, rootID string) error {
+	if f.setVariationOfFn != nil {
+		return f.setVariationOfFn(recipeID, rootID)
+	}
+	return nil
+}
+func (f *fakeStore) FamilyReferencesRecipe(_ context.Context, familyRootID, targetID string) (bool, error) {
+	if f.familyReferencesRecipeFn != nil {
+		return f.familyReferencesRecipeFn(familyRootID, targetID)
+	}
+	return false, nil
+}
 func (f *fakeStore) RepointRecipeReferences(_ context.Context, oldRootID, newRootID string) error {
 	f.repointRecipeReferences++
 	f.callOrder = append(f.callOrder, "RepointRecipeReferences")
@@ -161,6 +176,12 @@ func (f *fakeStore) GetRecipeTitles(_ context.Context, ids []string) (map[string
 		return f.getRecipeTitlesFn(ids)
 	}
 	return map[string]string{}, nil
+}
+func (f *fakeStore) GetUsersByIDs(_ context.Context, ids []string) (map[string]models.UserView, error) {
+	if f.getUsersByIDsFn != nil {
+		return f.getUsersByIDsFn(ids)
+	}
+	return map[string]models.UserView{}, nil
 }
 
 func (f *fakeStore) AddFavorite(context.Context, string, string) error       { return nil }
@@ -672,7 +693,7 @@ func TestMergePatchRejectsUnknownStepPicture(t *testing.T) {
 	recipe.Steps = []models.Step{{Description: "Mix", Picture: "known.jpg"}}
 	patch := models.UpdateRecipeRequest{Steps: &[]models.Step{{Description: "Mix", Picture: "unknown.jpg"}}}
 
-	_, err := mergePatch(recipe, patch, nil)
+	_, err := mergePatch(recipe, patch, nil, false)
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
@@ -687,7 +708,7 @@ func TestMergePatchAllowsKeepingOrDroppingKnownStepPicture(t *testing.T) {
 		{Description: "Bake"},
 	}}
 
-	merged, err := mergePatch(recipe, patch, nil)
+	merged, err := mergePatch(recipe, patch, nil, false)
 	if err != nil {
 		t.Fatalf("mergePatch: %v", err)
 	}
@@ -705,7 +726,7 @@ func TestMergePatchSkipsValidationForFreshUploadIndex(t *testing.T) {
 	recipe.Steps = []models.Step{{Description: "Mix"}}
 	patch := models.UpdateRecipeRequest{Steps: &[]models.Step{{Description: "Mix", Picture: "whatever-will-be-overwritten.jpg"}}}
 
-	merged, err := mergePatch(recipe, patch, map[int]bool{0: true})
+	merged, err := mergePatch(recipe, patch, map[int]bool{0: true}, false)
 	if err != nil {
 		t.Fatalf("mergePatch: %v", err)
 	}
@@ -731,7 +752,7 @@ func TestUpdateRemovesDroppedStepPictureFromDisk(t *testing.T) {
 	s := &Service{db: store, imageDir: dir, maxPictureBytes: 10 << 20}
 
 	patch := models.UpdateRecipeRequest{Steps: &[]models.Step{{Description: "Mix"}}}
-	if _, err := s.Update(context.Background(), recipe, patch, nil, nil); err != nil {
+	if _, err := s.Update(context.Background(), recipe, patch, nil, nil, false); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "old-step.jpg")); !os.IsNotExist(err) {
@@ -755,7 +776,7 @@ func TestUpdateWritesNewStepPictureAtGivenIndex(t *testing.T) {
 	s := &Service{db: store, imageDir: dir, maxPictureBytes: 10 << 20}
 
 	patch := models.UpdateRecipeRequest{Steps: &[]models.Step{{Description: "Mix"}}}
-	if _, err := s.Update(context.Background(), recipe, patch, nil, map[int]PictureUpload{0: pictureUpload(t)}); err != nil {
+	if _, err := s.Update(context.Background(), recipe, patch, nil, map[int]PictureUpload{0: pictureUpload(t)}, false); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if storedSteps[0].Picture == "" {
@@ -862,6 +883,72 @@ func TestCreateVariationOfMissingTargetReturnsNotFound(t *testing.T) {
 	_, err := s.Create(context.Background(), "author-1", input, nil, nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Create err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCreateRejectsVariationCategoryMismatch(t *testing.T) {
+	targetID := ptrObjectID()
+	target := models.Recipe{Id: targetID, Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
+	store := &fakeStore{
+		getRecipeByIdFn: func(string) (models.Recipe, error) { return target, nil },
+	}
+	s := &Service{db: store, imageDir: t.TempDir(), maxPictureBytes: 10 << 20}
+
+	input := validCreateRecipe()
+	input.VariationOf = targetID
+	input.Category = models.Diy
+	_, err := s.Create(context.Background(), "author-1", input, nil, nil)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Create err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestCreateAllowsVariationCategoryMatch(t *testing.T) {
+	targetID := ptrObjectID()
+	target := models.Recipe{Id: targetID, Category: models.Diy, Author: &models.UserView{Id: ptrObjectID()}}
+	var stored models.CreateRecipe
+	store := &fakeStore{
+		getRecipeByIdFn: func(string) (models.Recipe, error) { return target, nil },
+		createRecipeFn: func(_ string, infos *models.CreateRecipe) (models.Recipe, error) {
+			stored = *infos
+			return models.Recipe{Id: ptrObjectID(), SourceHash: infos.SourceHash}, nil
+		},
+	}
+	s := &Service{db: store, imageDir: t.TempDir(), maxPictureBytes: 10 << 20}
+
+	input := validCreateRecipe()
+	input.VariationOf = targetID
+	input.Category = models.Diy
+	if _, err := s.Create(context.Background(), "author-1", input, nil, nil); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if stored.Category != models.Diy {
+		t.Fatalf("stored.Category = %q, want %q", stored.Category, models.Diy)
+	}
+}
+
+func TestUpdateRejectsVariationCategoryMismatch(t *testing.T) {
+	rootID := ptrObjectID()
+	recipe := canonicalRecipe()
+	recipe.Author = &models.UserView{Id: ptrObjectID()}
+	recipe.Quantity = 1
+	recipe.Kind = models.RecipeKinds[0]
+	recipe.Category = models.Food
+	recipe.Ingredients = []models.Ingredient{{Name: "Flour"}}
+	recipe.Steps = []models.Step{{Description: "Mix"}}
+	recipe.VariationOf = rootID
+	store := &fakeStore{
+		getRecipeByIdFn: func(string) (models.Recipe, error) {
+			return models.Recipe{Id: rootID, Category: models.Food}, nil
+		},
+	}
+	s := &Service{db: store, imageDir: t.TempDir(), maxPictureBytes: 10 << 20}
+
+	diy := models.Diy
+	patch := models.UpdateRecipeRequest{Category: &diy}
+	_, err := s.Update(context.Background(), recipe, patch, nil, nil, false)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Update err = %v, want ErrInvalid", err)
 	}
 }
 
@@ -1013,6 +1100,173 @@ func TestDeleteAllowedWhenNotReferenced(t *testing.T) {
 	}
 }
 
+func TestLinkVariationSuccess(t *testing.T) {
+	sourceID := ptrObjectID()
+	targetID := ptrObjectID()
+	source := models.Recipe{Id: sourceID, Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
+	target := models.Recipe{Id: targetID, Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
+	var setCalledWith [2]string
+	store := &fakeStore{
+		getRecipeByIdFn: func(id string) (models.Recipe, error) {
+			switch id {
+			case sourceID.Hex():
+				return source, nil
+			case targetID.Hex():
+				return target, nil
+			default:
+				t.Fatalf("GetRecipeById called with unexpected id %q", id)
+				return models.Recipe{}, nil
+			}
+		},
+		setVariationOfFn: func(recipeID, rootID string) error {
+			setCalledWith = [2]string{recipeID, rootID}
+			return nil
+		},
+	}
+	s := &Service{db: store}
+
+	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); err != nil {
+		t.Fatalf("LinkVariation: %v", err)
+	}
+	if setCalledWith != [2]string{sourceID.Hex(), targetID.Hex()} {
+		t.Fatalf("SetVariationOf called with %v, want [%s %s]", setCalledWith, sourceID.Hex(), targetID.Hex())
+	}
+}
+
+func TestLinkVariationRejectsSameRecipe(t *testing.T) {
+	id := primitive.NewObjectID().Hex()
+	s := &Service{db: &fakeStore{}}
+	if _, err := s.LinkVariation(context.Background(), id, id); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("LinkVariation err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestLinkVariationRejectsSourceAlreadyVariation(t *testing.T) {
+	sourceID := ptrObjectID()
+	targetID := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(string) (models.Recipe, error) {
+			return models.Recipe{Id: sourceID, VariationOf: ptrObjectID()}, nil
+		},
+	}
+	s := &Service{db: store}
+	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrAlreadyVariation) {
+		t.Fatalf("LinkVariation err = %v, want ErrAlreadyVariation", err)
+	}
+}
+
+func TestLinkVariationRejectsSourceWithOwnVariations(t *testing.T) {
+	sourceID := ptrObjectID()
+	targetID := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(string) (models.Recipe, error) { return models.Recipe{Id: sourceID}, nil },
+		getVariationCountsFn: func(rootIDs []string) (map[string]int64, error) {
+			return map[string]int64{sourceID.Hex(): 2}, nil
+		},
+	}
+	s := &Service{db: store}
+	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrRecipeHasVariations) {
+		t.Fatalf("LinkVariation err = %v, want ErrRecipeHasVariations", err)
+	}
+}
+
+func TestLinkVariationRejectsTargetIsVariation(t *testing.T) {
+	sourceID := ptrObjectID()
+	targetID := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(id string) (models.Recipe, error) {
+			if id == sourceID.Hex() {
+				return models.Recipe{Id: sourceID}, nil
+			}
+			return models.Recipe{Id: targetID, VariationOf: ptrObjectID()}, nil
+		},
+	}
+	s := &Service{db: store}
+	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrTargetIsVariation) {
+		t.Fatalf("LinkVariation err = %v, want ErrTargetIsVariation", err)
+	}
+}
+
+func TestLinkVariationRejectsCategoryMismatch(t *testing.T) {
+	sourceID := ptrObjectID()
+	targetID := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(id string) (models.Recipe, error) {
+			if id == sourceID.Hex() {
+				return models.Recipe{Id: sourceID, Category: models.Food}, nil
+			}
+			return models.Recipe{Id: targetID, Category: models.Diy}, nil
+		},
+	}
+	s := &Service{db: store}
+	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrCategoryMismatch) {
+		t.Fatalf("LinkVariation err = %v, want ErrCategoryMismatch", err)
+	}
+}
+
+func TestLinkVariationRejectsWhenSourceReferencesTarget(t *testing.T) {
+	sourceID := ptrObjectID()
+	targetID := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(id string) (models.Recipe, error) {
+			if id == sourceID.Hex() {
+				return models.Recipe{Id: sourceID, Ingredients: []models.Ingredient{{RecipeRef: targetID}}}, nil
+			}
+			return models.Recipe{Id: targetID}, nil
+		},
+	}
+	s := &Service{db: store}
+	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrReferenceLoop) {
+		t.Fatalf("LinkVariation err = %v, want ErrReferenceLoop", err)
+	}
+}
+
+func TestLinkVariationRejectsWhenTargetFamilyReferencesSource(t *testing.T) {
+	sourceID := ptrObjectID()
+	targetID := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(id string) (models.Recipe, error) {
+			if id == sourceID.Hex() {
+				return models.Recipe{Id: sourceID}, nil
+			}
+			return models.Recipe{Id: targetID}, nil
+		},
+		familyReferencesRecipeFn: func(familyRootID, targetID string) (bool, error) { return true, nil },
+	}
+	s := &Service{db: store}
+	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrReferenceLoop) {
+		t.Fatalf("LinkVariation err = %v, want ErrReferenceLoop", err)
+	}
+}
+
+func TestDetachVariationSuccess(t *testing.T) {
+	id := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(string) (models.Recipe, error) { return models.Recipe{Id: id, VariationOf: ptrObjectID()}, nil },
+	}
+	s := &Service{db: store}
+	if _, err := s.DetachVariation(context.Background(), id.Hex()); err != nil {
+		t.Fatalf("DetachVariation: %v", err)
+	}
+	if store.promoteRecipeToRoot != 1 {
+		t.Fatalf("PromoteRecipeToRoot called %d times, want 1", store.promoteRecipeToRoot)
+	}
+}
+
+func TestDetachVariationRejectsNonVariation(t *testing.T) {
+	id := ptrObjectID()
+	store := &fakeStore{
+		getRecipeByIdFn: func(string) (models.Recipe, error) { return models.Recipe{Id: id}, nil },
+	}
+	s := &Service{db: store}
+	if _, err := s.DetachVariation(context.Background(), id.Hex()); !errors.Is(err, ErrNotVariation) {
+		t.Fatalf("DetachVariation err = %v, want ErrNotVariation", err)
+	}
+	if store.promoteRecipeToRoot != 0 {
+		t.Fatalf("PromoteRecipeToRoot called %d times, want 0", store.promoteRecipeToRoot)
+	}
+}
+
 func TestGetDecoratesVariationCount(t *testing.T) {
 	canonical := canonicalRecipe()
 	store := &fakeStore{
@@ -1106,6 +1360,55 @@ func TestListDetailedForUserResolvesRefIngredientTitles(t *testing.T) {
 	}
 }
 
+func TestSearchReportsNextOffsetWhenMorePagesRemain(t *testing.T) {
+	var gotParameters models.GetRecipesRequest
+	store := &fakeStore{
+		getRecipeDocumentsFn: func(parameters models.GetRecipesRequest) ([]models.Recipe, int64, error) {
+			gotParameters = parameters
+			documents := make([]models.Recipe, parameters.Limit)
+			for i := range documents {
+				documents[i] = models.Recipe{Id: ptrObjectID()}
+			}
+			return documents, 99, nil
+		},
+	}
+	s := &Service{db: store}
+
+	got, total, nextOffset, hasNext, err := s.Search(context.Background(), models.GetRecipesRequest{Title: "curry"}, 10, 2)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if gotParameters.Offset != 10 || gotParameters.Limit != 3 || gotParameters.Title != "curry" {
+		t.Fatalf("GetRecipeDocuments called with %+v, want Offset=10 Limit=3 Title=curry", gotParameters)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2 (trimmed to the requested limit)", len(got))
+	}
+	if total != 99 {
+		t.Fatalf("total = %d, want 99", total)
+	}
+	if !hasNext || nextOffset != 12 {
+		t.Fatalf("hasNext=%v nextOffset=%d, want true/12", hasNext, nextOffset)
+	}
+}
+
+func TestSearchReportsNoNextOffsetOnLastPage(t *testing.T) {
+	store := &fakeStore{
+		getRecipeDocumentsFn: func(parameters models.GetRecipesRequest) ([]models.Recipe, int64, error) {
+			return []models.Recipe{{Id: ptrObjectID()}}, 1, nil
+		},
+	}
+	s := &Service{db: store}
+
+	got, _, _, hasNext, err := s.Search(context.Background(), models.GetRecipesRequest{}, 0, 2)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(got) != 1 || hasNext {
+		t.Fatalf("len(got)=%d hasNext=%v, want 1/false", len(got), hasNext)
+	}
+}
+
 // recipesByAuthorStore wraps fakeStore to stub GetRecipesByAuthor, which
 // fakeStore itself always returns empty for.
 type recipesByAuthorStore struct {
@@ -1115,6 +1418,206 @@ type recipesByAuthorStore struct {
 
 func (r recipesByAuthorStore) GetRecipesByAuthor(context.Context, string, string, int) ([]models.Recipe, int64, error) {
 	return r.recipes, int64(len(r.recipes)), nil
+}
+
+func TestSourceHashIgnoresPictures(t *testing.T) {
+	base := validRecipeDB(nil)
+	base.Ingredients = []models.Ingredient{{Name: "Flour"}}
+	withPictures := base
+	withPictures.Pictures = []models.RecipePicture{{Filename: "a.jpg"}, {Filename: "b.jpg", AddedBy: ptrObjectID()}}
+
+	if sourceHash(base) != sourceHash(withPictures) {
+		t.Fatal("sourceHash differs based on Pictures alone, want it to depend only on translatable content")
+	}
+}
+
+func TestRegroupPicturesKeepsAuthorFirstAndPreservesRelativeOrder(t *testing.T) {
+	contributorA, contributorB := ptrObjectID(), ptrObjectID()
+	pictures := []models.RecipePicture{
+		{Filename: "contrib-a-1.jpg", AddedBy: contributorA},
+		{Filename: "author-1.jpg"},
+		{Filename: "contrib-b-1.jpg", AddedBy: contributorB},
+		{Filename: "author-2.jpg"},
+	}
+
+	got := regroupPictures(pictures)
+	want := []string{"author-1.jpg", "author-2.jpg", "contrib-a-1.jpg", "contrib-b-1.jpg"}
+	if len(got) != len(want) {
+		t.Fatalf("regroupPictures = %+v, want %d entries", got, len(want))
+	}
+	for i, filename := range want {
+		if got[i].Filename != filename {
+			t.Fatalf("regroupPictures[%d] = %q, want %q (full: %+v)", i, got[i].Filename, filename, got)
+		}
+	}
+}
+
+func recipeWithAuthor(authorID *primitive.ObjectID) models.Recipe {
+	recipe := canonicalRecipe()
+	recipe.Author = &models.UserView{Id: authorID}
+	return recipe
+}
+
+func TestAddPictureAuthorHasNoCap(t *testing.T) {
+	dir := t.TempDir()
+	authorID := ptrObjectID()
+	recipe := recipeWithAuthor(authorID)
+	for i := 0; i < PictureCapPerContributor+2; i++ {
+		recipe.Pictures = append(recipe.Pictures, models.RecipePicture{Filename: "author.jpg"})
+	}
+	var stored models.RecipeDB
+	store := &fakeStore{replaceRecipeByIdFn: func(_ string, r models.RecipeDB) (models.Recipe, error) {
+		stored = r
+		return models.Recipe{Id: recipe.Id, Pictures: r.Pictures}, nil
+	}}
+	s := &Service{db: store, imageDir: dir, maxPictureBytes: 10 << 20}
+
+	if _, err := s.AddPicture(context.Background(), recipe, authorID.Hex(), pictureUpload(t)); err != nil {
+		t.Fatalf("AddPicture: %v", err)
+	}
+	last := stored.Pictures[len(stored.Pictures)-1]
+	if last.AddedBy != nil {
+		t.Fatalf("new author picture AddedBy = %v, want nil", last.AddedBy)
+	}
+}
+
+func TestAddPictureEnforcesContributorCap(t *testing.T) {
+	authorID := ptrObjectID()
+	contributorID := ptrObjectID()
+	recipe := recipeWithAuthor(authorID)
+	for i := 0; i < PictureCapPerContributor; i++ {
+		recipe.Pictures = append(recipe.Pictures, models.RecipePicture{Filename: "contrib.jpg", AddedBy: contributorID})
+	}
+	s := &Service{db: &fakeStore{}, imageDir: t.TempDir(), maxPictureBytes: 10 << 20}
+
+	_, err := s.AddPicture(context.Background(), recipe, contributorID.Hex(), pictureUpload(t))
+	if !errors.Is(err, ErrPictureCapReached) {
+		t.Fatalf("AddPicture err = %v, want ErrPictureCapReached", err)
+	}
+}
+
+func TestAddPictureAttributesContributorAndKeepsAuthorGroupFirst(t *testing.T) {
+	dir := t.TempDir()
+	authorID := ptrObjectID()
+	contributorID := ptrObjectID()
+	recipe := recipeWithAuthor(authorID)
+	recipe.Pictures = []models.RecipePicture{{Filename: "author-1.jpg"}}
+	var stored models.RecipeDB
+	store := &fakeStore{replaceRecipeByIdFn: func(_ string, r models.RecipeDB) (models.Recipe, error) {
+		stored = r
+		return models.Recipe{Id: recipe.Id, Pictures: r.Pictures}, nil
+	}}
+	s := &Service{db: store, imageDir: dir, maxPictureBytes: 10 << 20}
+
+	if _, err := s.AddPicture(context.Background(), recipe, contributorID.Hex(), pictureUpload(t)); err != nil {
+		t.Fatalf("AddPicture: %v", err)
+	}
+	if len(stored.Pictures) != 2 {
+		t.Fatalf("stored.Pictures = %+v, want 2 entries", stored.Pictures)
+	}
+	if stored.Pictures[0].Filename != "author-1.jpg" || stored.Pictures[0].AddedBy != nil {
+		t.Fatalf("stored.Pictures[0] = %+v, want the untouched author picture first", stored.Pictures[0])
+	}
+	if stored.Pictures[1].AddedBy == nil || stored.Pictures[1].AddedBy.Hex() != contributorID.Hex() {
+		t.Fatalf("stored.Pictures[1].AddedBy = %v, want %v", stored.Pictures[1].AddedBy, contributorID)
+	}
+}
+
+func TestRemovePictureNotFound(t *testing.T) {
+	recipe := recipeWithAuthor(ptrObjectID())
+	s := &Service{db: &fakeStore{}}
+
+	_, err := s.RemovePicture(context.Background(), recipe, "missing.jpg", "someone", false)
+	if !errors.Is(err, ErrPictureNotFound) {
+		t.Fatalf("RemovePicture err = %v, want ErrPictureNotFound", err)
+	}
+}
+
+func TestRemovePicturePermissions(t *testing.T) {
+	authorID := ptrObjectID()
+	contributorID := ptrObjectID()
+	otherID := ptrObjectID()
+
+	for _, tc := range []struct {
+		name        string
+		callerID    string
+		callerAdmin bool
+		wantErr     error
+	}{
+		{"contributor removes their own picture", contributorID.Hex(), false, nil},
+		{"author removes the contributor's picture", authorID.Hex(), false, nil},
+		{"admin removes the contributor's picture", otherID.Hex(), true, nil},
+		{"unrelated user is forbidden", otherID.Hex(), false, ErrForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recipe := recipeWithAuthor(authorID)
+			recipe.Pictures = []models.RecipePicture{
+				{Filename: "author.jpg"},
+				{Filename: "contrib.jpg", AddedBy: contributorID},
+			}
+			store := &fakeStore{replaceRecipeByIdFn: func(_ string, r models.RecipeDB) (models.Recipe, error) {
+				return models.Recipe{Id: recipe.Id, Pictures: r.Pictures}, nil
+			}}
+			s := &Service{db: store, imageDir: t.TempDir()}
+
+			_, err := s.RemovePicture(context.Background(), recipe, "contrib.jpg", tc.callerID, tc.callerAdmin)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("RemovePicture err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMergePatchPreservesContributorPictureWithoutFullAccess(t *testing.T) {
+	contributorID := ptrObjectID()
+	recipe := recipeWithAuthor(ptrObjectID())
+	recipe.Pictures = []models.RecipePicture{
+		{Filename: "author.jpg"},
+		{Filename: "contrib.jpg", AddedBy: contributorID},
+	}
+	// The author's own wizard never lists contributor filenames.
+	patch := models.UpdateRecipeRequest{KeepPictureIDs: &[]string{"author.jpg"}}
+
+	merged, err := mergePatch(recipe, patch, nil, false)
+	if err != nil {
+		t.Fatalf("mergePatch: %v", err)
+	}
+	if len(merged.Pictures) != 2 || merged.Pictures[1].Filename != "contrib.jpg" {
+		t.Fatalf("merged.Pictures = %+v, want the contributor picture preserved", merged.Pictures)
+	}
+}
+
+func TestMergePatchRejectsAuthorRemovingContributorPictureWithoutFullAccess(t *testing.T) {
+	contributorID := ptrObjectID()
+	recipe := recipeWithAuthor(ptrObjectID())
+	recipe.Pictures = []models.RecipePicture{
+		{Filename: "author.jpg"},
+		{Filename: "contrib.jpg", AddedBy: contributorID},
+	}
+	patch := models.UpdateRecipeRequest{KeepPictureIDs: &[]string{"author.jpg", "contrib.jpg"}}
+
+	_, err := mergePatch(recipe, patch, nil, false)
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("mergePatch err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestMergePatchFullAccessAllowsRemovingContributorPicture(t *testing.T) {
+	contributorID := ptrObjectID()
+	recipe := recipeWithAuthor(ptrObjectID())
+	recipe.Pictures = []models.RecipePicture{
+		{Filename: "author.jpg"},
+		{Filename: "contrib.jpg", AddedBy: contributorID},
+	}
+	patch := models.UpdateRecipeRequest{KeepPictureIDs: &[]string{"author.jpg"}}
+
+	merged, err := mergePatch(recipe, patch, nil, true)
+	if err != nil {
+		t.Fatalf("mergePatch: %v", err)
+	}
+	if len(merged.Pictures) != 1 || merged.Pictures[0].Filename != "author.jpg" {
+		t.Fatalf("merged.Pictures = %+v, want only author.jpg (admin dropped the contributor picture)", merged.Pictures)
+	}
 }
 
 func TestListUsesPerRecipeFavoritesForOwnRecipes(t *testing.T) {

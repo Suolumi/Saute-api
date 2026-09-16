@@ -28,10 +28,12 @@ type recipeTranslationDocument struct {
 	RestingTime     int                   `bson:"resting_time,omitempty"`
 	Ingredients     []models.Ingredient   `bson:"ingredients,omitempty"`
 	Steps           []models.Step         `bson:"steps,omitempty"`
-	Pictures        []string              `bson:"pictures,omitempty"`
-	SourceLocale    string                `bson:"source_locale,omitempty"`
-	Locale          string                `bson:"locale,omitempty"`
-	SourceHash      string                `bson:"source_hash,omitempty"`
+	// Pictures is deliberately absent: like VariationOf, pictures are
+	// structural, not translatable content - pickTranslation always takes
+	// them from the canonical recipe, never from a translation row.
+	SourceLocale string `bson:"source_locale,omitempty"`
+	Locale       string `bson:"locale,omitempty"`
+	SourceHash   string `bson:"source_hash,omitempty"`
 }
 
 func translationFromRecipe(recipe models.Recipe, locale string) (recipeTranslationDocument, error) {
@@ -59,7 +61,6 @@ func translationFromRecipe(recipe models.Recipe, locale string) (recipeTranslati
 		RestingTime:     recipe.RestingTime,
 		Ingredients:     recipe.Ingredients,
 		Steps:           recipe.Steps,
-		Pictures:        recipe.Pictures,
 		SourceLocale:    recipe.SourceLocale,
 		Locale:          locale,
 		SourceHash:      recipe.SourceHash,

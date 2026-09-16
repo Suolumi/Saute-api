@@ -697,6 +697,25 @@ func (c *Client) PromoteRecipeToRoot(ctx context.Context, id string) error {
 	return err
 }
 
+// SetVariationOf points recipeID at rootID, turning a standalone recipe into
+// a variation - the counterpart of PromoteRecipeToRoot, which clears the
+// field back off.
+func (c *Client) SetVariationOf(ctx context.Context, recipeID, rootID string) error {
+	objectID, err := primitive.ObjectIDFromHex(recipeID)
+	if err != nil {
+		return err
+	}
+	rootObjectID, err := primitive.ObjectIDFromHex(rootID)
+	if err != nil {
+		return err
+	}
+	_, err = c.db.Collection(recipesCollection).UpdateOne(ctx,
+		bson.M{"_id": objectID},
+		bson.M{"$set": bson.M{"variation_of": rootObjectID}},
+	)
+	return err
+}
+
 // GetVariationCounts returns, for each given root id, how many variations it
 // has. A root with none is simply absent from the map.
 func (c *Client) GetVariationCounts(ctx context.Context, rootIDs []string) (map[string]int64, error) {
@@ -798,6 +817,32 @@ func (c *Client) HasIncomingReferences(ctx context.Context, recipeID string) (bo
 	}
 	count, err := c.db.Collection(recipesCollection).CountDocuments(ctx,
 		bson.M{"ingredients.recipe_ref": objectID},
+		options.Count().SetLimit(1),
+	)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// FamilyReferencesRecipe reports whether any recipe in familyRootID's family
+// (the root itself or any of its variations) has an ingredient referencing
+// targetID - the family-scoped counterpart of HasIncomingReferences, powering
+// LinkVariation's self-reference-loop check.
+func (c *Client) FamilyReferencesRecipe(ctx context.Context, familyRootID, targetID string) (bool, error) {
+	rootObjectID, err := primitive.ObjectIDFromHex(familyRootID)
+	if err != nil {
+		return false, err
+	}
+	targetObjectID, err := primitive.ObjectIDFromHex(targetID)
+	if err != nil {
+		return false, err
+	}
+	count, err := c.db.Collection(recipesCollection).CountDocuments(ctx,
+		bson.M{
+			"$or":                    bson.A{bson.M{"_id": rootObjectID}, bson.M{"variation_of": rootObjectID}},
+			"ingredients.recipe_ref": targetObjectID,
+		},
 		options.Count().SetLimit(1),
 	)
 	if err != nil {

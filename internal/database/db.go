@@ -41,11 +41,14 @@ type Database interface {
 	GetOldestVariationID(ctx context.Context, rootID string) (*primitive.ObjectID, error)
 	RepointVariations(ctx context.Context, oldRootID, newRootID string) error
 	PromoteRecipeToRoot(ctx context.Context, id string) error
+	SetVariationOf(ctx context.Context, recipeID, rootID string) error
 	GetVariationCounts(ctx context.Context, rootIDs []string) (map[string]int64, error)
 	RecipeCountsByCategory(ctx context.Context) (map[string]int64, error)
 	RepointRecipeReferences(ctx context.Context, oldRootID, newRootID string) error
 	HasIncomingReferences(ctx context.Context, recipeID string) (bool, error)
+	FamilyReferencesRecipe(ctx context.Context, familyRootID, targetID string) (bool, error)
 	GetRecipeTitles(ctx context.Context, ids []string) (map[string]string, error)
+	GetUsersByIDs(ctx context.Context, ids []string) (map[string]models.UserView, error)
 
 	AddFavorite(ctx context.Context, userID, recipeID string) error
 	RemoveFavorite(ctx context.Context, userID, recipeID string) error

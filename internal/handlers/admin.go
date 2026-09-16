@@ -185,6 +185,19 @@ func (h *Handlers) AdminListRecipes(c echo.Context) error {
 	return c.JSON(http.StatusOK, models.GetRecipesResponse{Length: count, Items: recipes})
 }
 
+// AdminDetachRecipeVariation removes a recipe from its family, turning it
+// back into a standalone root (recipe_service.DetachVariation). Admin only -
+// unlike LinkRecipeVariation, there is no self-service counterpart and no
+// MCP tool for this: it's a moderation action, and it's irreversible from
+// the app's own UI once done.
+func (h *Handlers) AdminDetachRecipeVariation(c echo.Context) error {
+	updated, err := h.recipes.DetachVariation(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
 // AdminStats backs the back-office dashboard.
 func (h *Handlers) AdminStats(c echo.Context) error {
 	ctx := c.Request().Context()

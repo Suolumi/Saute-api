@@ -5,6 +5,8 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"recipes/internal/models"
 )
 
 func (c *Client) ReferencedPictures(ctx context.Context) (map[string]struct{}, error) {
@@ -30,7 +32,7 @@ func (c *Client) ReferencedPictures(ctx context.Context) (map[string]struct{}, e
 		return nil, err
 	}
 	var recipePictures []struct {
-		Pictures []string `bson:"pictures"`
+		Pictures []models.RecipePicture `bson:"pictures"`
 		Steps    []struct {
 			Picture string `bson:"picture"`
 		} `bson:"steps"`
@@ -40,7 +42,7 @@ func (c *Client) ReferencedPictures(ctx context.Context) (map[string]struct{}, e
 	}
 	for _, recipe := range recipePictures {
 		for _, picture := range recipe.Pictures {
-			references[picture] = struct{}{}
+			references[picture.Filename] = struct{}{}
 		}
 		for _, step := range recipe.Steps {
 			if step.Picture != "" {

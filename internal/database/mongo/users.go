@@ -170,6 +170,39 @@ func (c *Client) GetUsers(username string, limit, offset int) ([]models.UserDB, 
 	return users, number, nil
 }
 
+// GetUsersByIDs batch-fetches the display-facing view (id, username,
+// picture) of every user in ids, for resolving recipe picture attribution.
+// Unknown ids are simply absent from the result.
+func (c *Client) GetUsersByIDs(ctx context.Context, ids []string) (map[string]models.UserView, error) {
+	result := make(map[string]models.UserView, len(ids))
+	objectIDs := make([]primitive.ObjectID, 0, len(ids))
+	for _, id := range ids {
+		if objectID, err := primitive.ObjectIDFromHex(id); err == nil {
+			objectIDs = append(objectIDs, objectID)
+		}
+	}
+	if len(objectIDs) == 0 {
+		return result, nil
+	}
+	cursor, err := c.db.Collection(userCollection).Find(ctx,
+		bson.M{"_id": bson.M{"$in": objectIDs}},
+		options.Find().SetProjection(bson.M{"username": 1, "picture": 1}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	var users []models.UserView
+	if err := cursor.All(ctx, &users); err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		if user.Id != nil {
+			result[user.Id.Hex()] = user
+		}
+	}
+	return result, nil
+}
+
 func (c *Client) CountUsers(ctx context.Context) (int64, error) {
 	return c.db.Collection(userCollection).CountDocuments(ctx, bson.M{})
 }

@@ -2,9 +2,52 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsontype"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+// RecipePicture is one picture attached to a recipe. AddedBy is nil for a
+// picture the recipe's own author added, including every picture written
+// before per-picture attribution existed - so no data migration is needed;
+// a non-nil AddedBy names the contributor who added a picture to a recipe
+// they don't author.
+type RecipePicture struct {
+	Filename string              `bson:"filename" json:"filename"`
+	AddedBy  *primitive.ObjectID `bson:"added_by,omitempty" json:"added_by,omitempty"`
+}
+
+// UnmarshalBSONValue accepts either a legacy bare-filename array entry
+// (every recipe document written before this field existed) or the current
+// {filename, added_by} document, so existing data reads correctly with no
+// migration - a legacy entry decodes as an author-owned (AddedBy nil)
+// picture, same as any other author-added one. Writing a recipe back always
+// produces the current document shape (the default struct encoding), so a
+// document upgrades to the new shape the next time it's saved.
+func (p *RecipePicture) UnmarshalBSONValue(t bsontype.Type, data []byte) error {
+	switch t {
+	case bsontype.String:
+		raw := bson.RawValue{Type: t, Value: data}
+		p.Filename = raw.StringValue()
+		p.AddedBy = nil
+		return nil
+	case bsontype.EmbeddedDocument:
+		var doc struct {
+			Filename string              `bson:"filename"`
+			AddedBy  *primitive.ObjectID `bson:"added_by,omitempty"`
+		}
+		if err := bson.Unmarshal(data, &doc); err != nil {
+			return err
+		}
+		p.Filename = doc.Filename
+		p.AddedBy = doc.AddedBy
+		return nil
+	default:
+		return fmt.Errorf("recipe picture: unsupported bson type %s", t)
+	}
+}
 
 type GetRecipesRequest struct {
 	Limit           int        `query:"limit,omitempty"`
@@ -43,6 +86,13 @@ type GetRecipesRequest struct {
 type GetRecipesResponse struct {
 	Length int64           `json:"length"`
 	Items  []RecipePreview `json:"items"`
+}
+
+// LinkVariationRequest is PATCH /recipes/:id/variation-of's body: the id of
+// the (root) recipe to link the path recipe as a variation of. See
+// recipe_service.LinkVariation.
+type LinkVariationRequest struct {
+	VariationOf string `json:"variation_of"`
 }
 
 type UpdateRecipeRequest struct {
@@ -94,19 +144,19 @@ const Food = RecipeCategory("food")
 const Diy = RecipeCategory("diy")
 
 type CreateRecipe struct {
-	Title           string         `bson:"title,omitempty" json:"title"`
-	Description     string         `bson:"description,omitempty" json:"description"`
-	Quantity        int            `bson:"quantity,omitempty" json:"quantity"`
-	Kind            RecipeKind     `bson:"kind,omitempty" json:"kind"`
-	Category        RecipeCategory `bson:"category,omitempty" json:"category"`
-	PreparationTime int            `bson:"preparation_time,omitempty" json:"preparation_time"`
-	CookingTime     int            `bson:"cooking_time,omitempty" json:"cooking_time"`
-	RestingTime     int            `bson:"resting_time,omitempty" json:"resting_time"`
-	Ingredients     []Ingredient   `bson:"ingredients,omitempty" json:"ingredients"`
-	Steps           []Step         `bson:"steps,omitempty" json:"steps"`
-	Pictures        []string       `bson:"pictures,omitempty" json:"-"`
-	SourceLocale    string         `bson:"source_locale,omitempty" json:"locale,omitempty"`
-	SourceHash      string         `bson:"source_hash,omitempty" json:"-"`
+	Title           string          `bson:"title,omitempty" json:"title"`
+	Description     string          `bson:"description,omitempty" json:"description"`
+	Quantity        int             `bson:"quantity,omitempty" json:"quantity"`
+	Kind            RecipeKind      `bson:"kind,omitempty" json:"kind"`
+	Category        RecipeCategory  `bson:"category,omitempty" json:"category"`
+	PreparationTime int             `bson:"preparation_time,omitempty" json:"preparation_time"`
+	CookingTime     int             `bson:"cooking_time,omitempty" json:"cooking_time"`
+	RestingTime     int             `bson:"resting_time,omitempty" json:"resting_time"`
+	Ingredients     []Ingredient    `bson:"ingredients,omitempty" json:"ingredients"`
+	Steps           []Step          `bson:"steps,omitempty" json:"steps"`
+	Pictures        []RecipePicture `bson:"pictures,omitempty" json:"-"`
+	SourceLocale    string          `bson:"source_locale,omitempty" json:"locale,omitempty"`
+	SourceHash      string          `bson:"source_hash,omitempty" json:"-"`
 	// VariationOf, on the way in, is the id of the recipe being forked; the
 	// service resolves it to that recipe's root (flattening a
 	// variation-of-a-variation) before it's ever persisted. Must stay the
@@ -131,7 +181,7 @@ type RecipeDB struct {
 	RestingTime     int                 `bson:"resting_time,omitempty" json:"resting_time"`
 	Ingredients     []Ingredient        `bson:"ingredients,omitempty" json:"ingredients"`
 	Steps           []Step              `bson:"steps,omitempty" json:"steps"`
-	Pictures        []string            `bson:"pictures,omitempty" json:"pictures"`
+	Pictures        []RecipePicture     `bson:"pictures,omitempty" json:"pictures"`
 	SourceLocale    string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
 	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	SourceHash      string              `bson:"source_hash,omitempty" json:"-"`
@@ -154,18 +204,34 @@ type Recipe struct {
 	RestingTime     int                 `bson:"resting_time,omitempty" json:"resting_time"`
 	Ingredients     []Ingredient        `bson:"ingredients,omitempty" json:"ingredients"`
 	Steps           []Step              `bson:"steps,omitempty" json:"steps"`
-	Pictures        []string            `bson:"pictures,omitempty" json:"pictures"`
-	SourceLocale    string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
-	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
-	SourceHash      string              `bson:"source_hash,omitempty" json:"-"`
-	VariationOf     *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
-	// Favorite, FavoriteCount and VariationCount are stamped on after fetch
-	// (see recipe_service.decorateFamilyFavorite/decorateVariationCount);
-	// they never come from the recipe or translation document itself, hence
-	// bson:"-".
-	Favorite       bool  `bson:"-" json:"favorite"`
-	FavoriteCount  int64 `bson:"-" json:"favorite_count"`
-	VariationCount int64 `bson:"-" json:"variation_count"`
+	// Pictures is the raw, unresolved picture list (as stored/written); it's
+	// not serialized directly (json:"-") - AddedBy is a bare user id, not
+	// display data. PictureOutputs, populated post-fetch, is what clients
+	// actually receive under the "pictures" key.
+	Pictures     []RecipePicture     `bson:"pictures,omitempty" json:"-"`
+	SourceLocale string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
+	Locale       string              `bson:"locale,omitempty" json:"locale,omitempty"`
+	SourceHash   string              `bson:"source_hash,omitempty" json:"-"`
+	VariationOf  *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
+	// Favorite, FavoriteCount, VariationCount and PictureOutputs are stamped
+	// on after fetch (see recipe_service.decorateFamilyFavorite/
+	// decorateVariationCount/decoratePictureContributors); they never come
+	// from the recipe or translation document itself, hence bson:"-".
+	Favorite       bool            `bson:"-" json:"favorite"`
+	FavoriteCount  int64           `bson:"-" json:"favorite_count"`
+	VariationCount int64           `bson:"-" json:"variation_count"`
+	PictureOutputs []PictureOutput `bson:"-" json:"pictures"`
+}
+
+// PictureOutput is one picture as served to clients: a filename plus, for a
+// contributor's picture, who added it (nil/absent means the recipe's own
+// author). AddedBy is only resolved to a full UserView when the fetch path
+// decorates it (recipe_service.decoratePictureContributors, currently just
+// Service.Get, the recipe detail fetch) - other paths leave it nil even for
+// a contributor picture, since nothing renders attribution there.
+type PictureOutput struct {
+	Filename string    `json:"filename"`
+	AddedBy  *UserView `json:"added_by,omitempty"`
 }
 
 // MarshalJSON ensures a recipe with no pictures serializes `pictures` as `[]`
@@ -175,8 +241,8 @@ type Recipe struct {
 func (r Recipe) MarshalJSON() ([]byte, error) {
 	type alias Recipe
 	a := alias(r)
-	if a.Pictures == nil {
-		a.Pictures = []string{}
+	if a.PictureOutputs == nil {
+		a.PictureOutputs = []PictureOutput{}
 	}
 	return json.Marshal(a)
 }

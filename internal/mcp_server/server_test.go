@@ -69,6 +69,29 @@ func TestCursorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestOffsetCursorRoundTrip(t *testing.T) {
+	encoded := encodeOffsetCursor(40)
+	if encoded == "" || encoded == "40" {
+		t.Fatalf("cursor was not made opaque: %q", encoded)
+	}
+	decoded, err := decodeOffsetCursor(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded != 40 {
+		t.Fatalf("decoded cursor = %d, want 40", decoded)
+	}
+	if decoded, err := decodeOffsetCursor(""); err != nil || decoded != 0 {
+		t.Fatalf("decodeOffsetCursor(\"\") = %d, %v, want 0, nil", decoded, err)
+	}
+	if _, err := decodeOffsetCursor("not-a-cursor"); err == nil {
+		t.Fatal("expected malformed cursor to fail")
+	}
+	if _, err := decodeOffsetCursor(encodeOffsetCursor(-1)); err == nil {
+		t.Fatal("expected a negative offset to fail")
+	}
+}
+
 func TestUserWithScope(t *testing.T) {
 	req := &mcp.CallToolRequest{Extra: &mcp.RequestExtra{TokenInfo: &auth.TokenInfo{UserID: "user-id", Scopes: []string{"recipes:read"}}}}
 	userID, err := userWithScope(req, "recipes:read")

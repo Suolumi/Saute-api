@@ -36,6 +36,24 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusConflict, "Recipe has favorites and cannot be deleted", nil, c)
 	case errors.Is(err, recipe_service.ErrRecipeReferenced):
 		return errorResponse(http.StatusConflict, "Recipe is referenced by other recipes and cannot be deleted", nil, c)
+	case errors.Is(err, recipe_service.ErrPictureCapReached):
+		return errorResponse(http.StatusConflict, "Picture limit reached for this recipe", nil, c)
+	case errors.Is(err, recipe_service.ErrPictureNotFound):
+		return errorResponse(http.StatusNotFound, "Picture not found", nil, c)
+	case errors.Is(err, recipe_service.ErrForbidden):
+		return errorResponse(http.StatusForbidden, "Forbidden", nil, c)
+	case errors.Is(err, recipe_service.ErrAlreadyVariation):
+		return errorResponse(http.StatusUnprocessableEntity, "Recipe is already a variation", nil, c)
+	case errors.Is(err, recipe_service.ErrRecipeHasVariations):
+		return errorResponse(http.StatusConflict, "Recipe already has its own variations", nil, c)
+	case errors.Is(err, recipe_service.ErrTargetIsVariation):
+		return errorResponse(http.StatusUnprocessableEntity, "Target recipe is itself a variation", nil, c)
+	case errors.Is(err, recipe_service.ErrCategoryMismatch):
+		return errorResponse(http.StatusUnprocessableEntity, "Recipe and target must share the same category", nil, c)
+	case errors.Is(err, recipe_service.ErrReferenceLoop):
+		return errorResponse(http.StatusConflict, "Linking would create a recipe that references its own family", nil, c)
+	case errors.Is(err, recipe_service.ErrNotVariation):
+		return errorResponse(http.StatusUnprocessableEntity, "Recipe is not a variation", nil, c)
 	default:
 		return errorResponse(http.StatusInternalServerError, "Could not process recipe", err, c)
 	}
@@ -248,11 +266,66 @@ func (h *Handlers) UpdateRecipe(c echo.Context) error {
 		return errorResponse(http.StatusBadRequest, err.Error(), nil, c)
 	}
 	recipe := c.Get("recipe").(models.Recipe)
-	updated, err := h.recipes.Update(c.Request().Context(), recipe, body, pictures, stepPictures)
+	jwt := jwt_manager.GetJwt[*models.TokenClaims](c)
+	// fullPictureAccess: an admin editing a recipe they don't own is a
+	// deliberate moderation action (see the admin recipes table) that may
+	// touch any picture, author's or contributor's; the recipe's own author
+	// (admin or not) only ever controls their own pictures - see mergePatch.
+	fullPictureAccess := jwt.Admin && recipe.Author != nil && recipe.Author.Id != nil && recipe.Author.Id.Hex() != jwt.UserId
+	updated, err := h.recipes.Update(c.Request().Context(), recipe, body, pictures, stepPictures, fullPictureAccess)
 	if err != nil {
 		return recipeServiceError(err, c)
 	}
 	return c.JSON(http.StatusOK, updated)
+}
+
+// AddRecipePicture adds one picture to a recipe on behalf of the
+// authenticated user - the recipe's author or any other user, who becomes a
+// contributor. Multipart, a single "picture" file field.
+func (h *Handlers) AddRecipePicture(c echo.Context) error {
+	fileHeader, err := c.FormFile("picture")
+	if err != nil {
+		return errorResponse(http.StatusBadRequest, "picture file is required", nil, c)
+	}
+	pictures, err := readPictureParts([]*multipart.FileHeader{fileHeader})
+	if err != nil {
+		return errorResponse(http.StatusBadRequest, err.Error(), nil, c)
+	}
+	jwt := jwt_manager.GetJwt[*models.TokenClaims](c)
+	recipe := c.Get("recipe").(models.Recipe)
+	updated, err := h.recipes.AddPicture(c.Request().Context(), recipe, jwt.UserId, pictures[0])
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusCreated, updated)
+}
+
+// RemoveRecipePicture removes one picture from a recipe. Permission
+// (contributor removing their own, author removing any, or admin) is
+// enforced by recipe_service.RemovePicture.
+func (h *Handlers) RemoveRecipePicture(c echo.Context) error {
+	jwt := jwt_manager.GetJwt[*models.TokenClaims](c)
+	recipe := c.Get("recipe").(models.Recipe)
+	updated, err := h.recipes.RemovePicture(c.Request().Context(), recipe, c.Param("filename"), jwt.UserId, jwt.Admin)
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
+// RecipeLoaderMiddleware loads the recipe named by :id into context without
+// any author/admin gate - for routes any authenticated user may call, where
+// the handler or service enforces whatever finer-grained permission applies
+// (see AddRecipePicture/RemoveRecipePicture).
+func (h *Handlers) RecipeLoaderMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		recipe, err := h.db.GetRecipeById(c.Param("id"))
+		if err != nil {
+			return errorResponse(http.StatusNotFound, "Recipe not found", nil, c)
+		}
+		c.Set("recipe", recipe)
+		return next(c)
+	}
 }
 
 func (h *Handlers) DeleteRecipe(c echo.Context) error {
@@ -261,6 +334,22 @@ func (h *Handlers) DeleteRecipe(c echo.Context) error {
 		return recipeServiceError(err, c)
 	}
 	return c.JSON(http.StatusOK, recipe)
+}
+
+// LinkRecipeVariation turns the path recipe into a variation of the recipe
+// named in the body - reachable by the recipe's own author or an admin (see
+// RecipeAuthorMiddleware, which also loads and gates on "recipe"). See
+// recipe_service.LinkVariation for the validation this goes through.
+func (h *Handlers) LinkRecipeVariation(c echo.Context) error {
+	var body models.LinkVariationRequest
+	if err := c.Bind(&body); err != nil {
+		return errorResponse(http.StatusBadRequest, err.Error(), nil, c)
+	}
+	updated, err := h.recipes.LinkVariation(c.Request().Context(), c.Param("id"), body.VariationOf)
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusOK, updated)
 }
 
 // RetranslateRecipe schedules a fresh translation of one recipe into every

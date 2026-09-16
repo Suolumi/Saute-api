@@ -86,6 +86,22 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		},
 	},
 	{
+		ID: "recipes.linkVariation", Method: "PATCH", Path: "/recipes/:id/variation-of", Category: "recipes",
+		Label: "Link recipe as variation", Description: "Turn an existing standalone recipe into a variation of another recipe.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Picker: "recipe", Required: true, Label: "Recipe to link"},
+			{Name: "variation_of", In: "body", Type: "string", Picker: "recipe", Required: true, Label: "Target recipe"},
+		},
+	},
+	{
+		ID: "admin.recipes.detachVariation", Method: "DELETE", Path: "/admin/recipes/:id/variation-of", Category: "recipes",
+		Label: "Detach recipe from family", Description: "Remove a variation from its family, turning it back into a standalone root.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Picker: "recipe", Required: true, Label: "Variation"},
+		},
+	},
+	{
 		ID: "admin.recipes.list", Method: "GET", Path: "/admin/recipes", Category: "recipes",
 		Label: "List recipes (flat)", Description: "Browse every recipe and variation across all users, ungrouped.",
 		Params: []models.AdminRouteParam{

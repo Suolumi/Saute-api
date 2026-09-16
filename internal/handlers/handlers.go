@@ -217,6 +217,7 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.POST("/users/:id/send-password-reset", h.AdminSendPasswordReset, authLimiter)
 	adminRouter.DELETE("/users/:id/mcp-token", h.AdminRevokeMcpToken, authLimiter)
 	adminRouter.GET("/recipes", h.AdminListRecipes)
+	adminRouter.DELETE("/recipes/:id/variation-of", h.AdminDetachRecipeVariation, authLimiter)
 	adminRouter.GET("/system/stats", h.AdminStats)
 	adminRouter.POST("/system/cleanup-images", h.AdminCleanupImages, authLimiter)
 
@@ -226,9 +227,12 @@ func (h *Handlers) RegisterEndpoints() {
 	unprotectedRouter.GET("/recipes/:id", h.GetRecipe)
 	protectedRouter.PATCH("/recipes/:id", h.UpdateRecipe, h.RecipeAuthorMiddleware, middleware.BodyLimit("90M"))
 	protectedRouter.DELETE("/recipes/:id", h.DeleteRecipe, h.RecipeAuthorMiddleware)
+	protectedRouter.PATCH("/recipes/:id/variation-of", h.LinkRecipeVariation, h.RecipeAuthorMiddleware)
 	protectedRouter.POST("/recipes/:id/retranslate", h.RetranslateRecipe, adminMiddleware, authLimiter)
 	protectedRouter.POST("/recipes/:id/favorite", h.FavoriteRecipe)
 	protectedRouter.DELETE("/recipes/:id/favorite", h.UnfavoriteRecipe)
+	protectedRouter.POST("/recipes/:id/pictures", h.AddRecipePicture, h.RecipeLoaderMiddleware, middleware.BodyLimit("10M"))
+	protectedRouter.DELETE("/recipes/:id/pictures/:filename", h.RemoveRecipePicture, h.RecipeLoaderMiddleware)
 
 	// Recipes images
 	unprotectedRouter.Static("/recipe-pictures", h.cfg.RecipeImageDir)

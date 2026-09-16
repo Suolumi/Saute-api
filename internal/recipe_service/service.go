@@ -30,6 +30,10 @@ const (
 	// translateConcurrency caps how many recipes are being translated at once
 	// across all detached write-path work.
 	translateConcurrency = 4
+
+	// PictureCapPerContributor bounds how many pictures one non-author user
+	// can add to a single recipe.
+	PictureCapPerContributor = 3
 )
 
 // translateBackoffs is the wait before each attempt when translating one locale;
@@ -37,11 +41,49 @@ const (
 var translateBackoffs = []time.Duration{time.Second, 4 * time.Second, 10 * time.Second}
 
 var (
-	ErrInvalid          = errors.New("invalid recipe")
-	ErrNotFound         = errors.New("recipe not found")
-	ErrHasFavorites     = errors.New("recipe has favorites")
-	ErrRecipeReferenced = errors.New("recipe is referenced by other recipes")
+	ErrInvalid           = errors.New("invalid recipe")
+	ErrNotFound          = errors.New("recipe not found")
+	ErrHasFavorites      = errors.New("recipe has favorites")
+	ErrRecipeReferenced  = errors.New("recipe is referenced by other recipes")
+	ErrPictureNotFound   = errors.New("picture not found")
+	ErrPictureCapReached = errors.New("picture cap reached for this contributor")
+	ErrForbidden         = errors.New("forbidden")
+	// ErrAlreadyVariation is LinkVariation's guard against a source recipe
+	// that's already a variation of something - only a standalone recipe
+	// (VariationOf == nil) can be linked; re-parenting an existing variation
+	// is out of scope (see DetachVariation for the one existing way back to
+	// standalone).
+	ErrAlreadyVariation = errors.New("recipe is already a variation")
+	// ErrRecipeHasVariations is LinkVariation's guard against a source recipe
+	// that already has its own variations - linking it would require
+	// promoting/repointing a whole subtree, which this operation doesn't do.
+	ErrRecipeHasVariations = errors.New("recipe already has its own variations")
+	// ErrTargetIsVariation is LinkVariation's guard requiring the target to
+	// be a genuine root - unlike Create's variation_of, this never
+	// auto-flattens to the target's own root.
+	ErrTargetIsVariation = errors.New("target recipe is itself a variation")
+	// ErrCategoryMismatch is LinkVariation's guard requiring the source and
+	// target to share the same category (food/diy).
+	ErrCategoryMismatch = errors.New("recipe and target must share the same category")
+	// ErrReferenceLoop is LinkVariation's guard against linking a recipe that
+	// would make some family member's ingredient reference its own family -
+	// either because the source already references the target, or because
+	// something in the target's family already references the source.
+	ErrReferenceLoop = errors.New("linking would create a recipe that references its own family")
+	// ErrNotVariation is DetachVariation's guard: only an actual variation
+	// (VariationOf != nil) can be detached back to standalone.
+	ErrNotVariation = errors.New("recipe is not a variation")
 )
+
+// defaultCategory normalizes a possibly-legacy empty Category to Food,
+// matching buildRecipeFilterPipeline's treatment of documents that predate
+// the category field.
+func defaultCategory(category models.RecipeCategory) models.RecipeCategory {
+	if category == "" {
+		return models.Food
+	}
+	return category
+}
 
 type PictureUpload struct {
 	Filename  string `json:"filename"`
@@ -67,10 +109,13 @@ type Store interface {
 	GetOldestVariationID(ctx context.Context, rootID string) (*primitive.ObjectID, error)
 	RepointVariations(ctx context.Context, oldRootID, newRootID string) error
 	PromoteRecipeToRoot(ctx context.Context, id string) error
+	SetVariationOf(ctx context.Context, recipeID, rootID string) error
 	GetVariationCounts(ctx context.Context, rootIDs []string) (map[string]int64, error)
 	RepointRecipeReferences(ctx context.Context, oldRootID, newRootID string) error
 	HasIncomingReferences(ctx context.Context, recipeID string) (bool, error)
+	FamilyReferencesRecipe(ctx context.Context, familyRootID, targetID string) (bool, error)
 	GetRecipeTitles(ctx context.Context, ids []string) (map[string]string, error)
+	GetUsersByIDs(ctx context.Context, ids []string) (map[string]models.UserView, error)
 
 	AddFavorite(ctx context.Context, userID, recipeID string) error
 	RemoveFavorite(ctx context.Context, userID, recipeID string) error
@@ -197,6 +242,11 @@ func sourceHash(recipe models.RecipeDB) string {
 	recipe.Locale = ""
 	recipe.SourceHash = ""
 	recipe.VariationOf = nil
+	// Pictures are structural, not translatable content (like VariationOf
+	// above): excluding them keeps a picture add/remove from invalidating an
+	// otherwise-current stored translation - see pickTranslation, which
+	// likewise always takes Pictures from the canonical recipe.
+	recipe.Pictures = nil
 	data, _ := json.Marshal(recipe)
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
@@ -297,6 +347,19 @@ func (s *Service) normalizeAndWriteAllPictures(pictures []PictureUpload, stepUpl
 	return recipeFilenames, stepFilenames, nil
 }
 
+// rootCategoryOf fetches rootID's Category, defaulted like defaultCategory.
+// Used to enforce that a variation's category always matches its root's.
+func (s *Service) rootCategoryOf(rootID *primitive.ObjectID) (models.RecipeCategory, error) {
+	root, err := s.db.GetRecipeById(rootID.Hex())
+	if err != nil {
+		if errors.Is(err, mongorepo.NotFoundError) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return defaultCategory(root.Category), nil
+}
+
 func (s *Service) Create(ctx context.Context, authorID string, input models.CreateRecipe, pictures []PictureUpload, stepPictures map[int]PictureUpload) (models.Recipe, error) {
 	locale, err := normalizeLocale(input.SourceLocale)
 	if err != nil {
@@ -313,6 +376,7 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 		PreparationTime: input.PreparationTime, CookingTime: input.CookingTime, RestingTime: input.RestingTime,
 		Ingredients: input.Ingredients, Steps: input.Steps, SourceLocale: input.SourceLocale,
 	}
+	var variationRootCategory models.RecipeCategory
 	if input.VariationOf != nil {
 		target, err := s.db.GetRecipeById(input.VariationOf.Hex())
 		if err != nil {
@@ -322,10 +386,15 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 			return models.Recipe{}, err
 		}
 		root := target.Id
+		variationRootCategory = defaultCategory(target.Category)
 		// Always flatten to the target's own root - a variation never chains
 		// off another variation.
 		if target.VariationOf != nil {
 			root = target.VariationOf
+			variationRootCategory, err = s.rootCategoryOf(root)
+			if err != nil {
+				return models.Recipe{}, err
+			}
 		}
 		recipeDB.VariationOf = root
 	}
@@ -338,6 +407,9 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 	if err := validateRecipe(&recipeDB); err != nil {
 		return models.Recipe{}, err
 	}
+	if recipeDB.VariationOf != nil && recipeDB.Category != variationRootCategory {
+		return models.Recipe{}, fmt.Errorf("%w: a variation's category must match its root recipe's category", ErrInvalid)
+	}
 	stepIndices, stepUploads, err := s.stepPictureUploads(stepPictures, len(recipeDB.Steps))
 	if err != nil {
 		return models.Recipe{}, err
@@ -346,7 +418,7 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 	if err != nil {
 		return models.Recipe{}, err
 	}
-	recipeDB.Pictures = append(recipeDB.Pictures, recipeFilenames...)
+	recipeDB.Pictures = append(recipeDB.Pictures, authorPictures(recipeFilenames)...)
 	for index, filename := range stepFilenames {
 		recipeDB.Steps[index].Picture = filename
 	}
@@ -359,6 +431,7 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 	}
 	s.scheduleTranslations(created)
 	created.Locale = created.SourceLocale
+	s.decoratePictureContributors(ctx, &created)
 	return created, nil
 }
 
@@ -371,11 +444,62 @@ func mapValues[K comparable, V any](m map[K]V) []V {
 	return values
 }
 
+// authorPictures wraps freshly-uploaded filenames as author-owned picture
+// entries (AddedBy nil) - the only kind Create/Update ever add directly.
+func authorPictures(filenames []string) []models.RecipePicture {
+	pictures := make([]models.RecipePicture, 0, len(filenames))
+	for _, filename := range filenames {
+		pictures = append(pictures, models.RecipePicture{Filename: filename})
+	}
+	return pictures
+}
+
+// pictureFilenames extracts just the filenames, in order, for callers (like
+// preview projection) that don't need attribution.
+func pictureFilenames(pictures []models.RecipePicture) []string {
+	if len(pictures) == 0 {
+		return nil
+	}
+	filenames := make([]string, len(pictures))
+	for i, picture := range pictures {
+		filenames[i] = picture.Filename
+	}
+	return filenames
+}
+
+// regroupPictures stable-partitions pictures into the recipe author's own
+// (AddedBy nil) first, followed by every contributor's, preserving each
+// group's relative order - the invariant "the author's pictures are always
+// first" that every write path (Create/Update/AddPicture/RemovePicture)
+// re-establishes rather than relying on callers to maintain it.
+func regroupPictures(pictures []models.RecipePicture) []models.RecipePicture {
+	regrouped := make([]models.RecipePicture, 0, len(pictures))
+	for _, picture := range pictures {
+		if picture.AddedBy == nil {
+			regrouped = append(regrouped, picture)
+		}
+	}
+	for _, picture := range pictures {
+		if picture.AddedBy != nil {
+			regrouped = append(regrouped, picture)
+		}
+	}
+	return regrouped
+}
+
 // mergePatch applies patch onto recipe. freshStepPictures holds the step
 // indices that have a new picture upload pending in this request: their
 // patch-supplied Picture value is ignored (it will be overwritten with the
 // upload's filename once normalized) rather than validated as a keep.
-func mergePatch(recipe models.Recipe, patch models.UpdateRecipeRequest, freshStepPictures map[int]bool) (models.RecipeDB, error) {
+// fullPictureAccess is false for the recipe's own author, editing through
+// the normal author flow: patch.KeepPictureIDs may only reference the
+// author's own pictures (AddedBy nil), and any contributor picture is
+// preserved untouched regardless of whether it's listed - a stale save
+// can never silently drop someone else's photo. fullPictureAccess is true
+// only for an admin editing a recipe they don't own (see UpdateRecipe):
+// patch.KeepPictureIDs may then reference and drop any picture, author's or
+// contributor's, since that's a deliberate moderation action.
+func mergePatch(recipe models.Recipe, patch models.UpdateRecipeRequest, freshStepPictures map[int]bool, fullPictureAccess bool) (models.RecipeDB, error) {
 	merged := recipe.ToRecipeDB()
 	merged.Locale = ""
 	if patch.Title != nil {
@@ -427,34 +551,56 @@ func mergePatch(recipe models.Recipe, patch models.UpdateRecipeRequest, freshSte
 		merged.SourceLocale = *patch.Locale
 	}
 	if patch.KeepPictureIDs != nil {
-		available := make(map[string]bool, len(recipe.Pictures))
-		for _, id := range recipe.Pictures {
-			available[id] = true
+		available := make(map[string]models.RecipePicture, len(recipe.Pictures))
+		for _, picture := range recipe.Pictures {
+			available[picture.Filename] = picture
 		}
 		seen := make(map[string]bool, len(*patch.KeepPictureIDs))
 		merged.Pictures = nil
-		for _, id := range *patch.KeepPictureIDs {
-			if !available[id] || seen[id] {
+		for _, filename := range *patch.KeepPictureIDs {
+			picture, ok := available[filename]
+			if !ok || seen[filename] {
 				return models.RecipeDB{}, fmt.Errorf("%w: invalid or duplicate keep_picture_ids entry", ErrInvalid)
 			}
-			seen[id] = true
-			merged.Pictures = append(merged.Pictures, id)
+			if !fullPictureAccess && picture.AddedBy != nil {
+				return models.RecipeDB{}, fmt.Errorf("%w: keep_picture_ids cannot reference a contributor's picture", ErrInvalid)
+			}
+			seen[filename] = true
+			merged.Pictures = append(merged.Pictures, picture)
+		}
+		if !fullPictureAccess {
+			// Every contributor picture survives untouched, regardless of
+			// whether it was listed - see the fullPictureAccess doc comment.
+			for _, picture := range recipe.Pictures {
+				if picture.AddedBy != nil {
+					merged.Pictures = append(merged.Pictures, picture)
+				}
+			}
 		}
 	}
 	return merged, nil
 }
 
-func (s *Service) Update(ctx context.Context, recipe models.Recipe, patch models.UpdateRecipeRequest, pictures []PictureUpload, stepPictures map[int]PictureUpload) (models.Recipe, error) {
+func (s *Service) Update(ctx context.Context, recipe models.Recipe, patch models.UpdateRecipeRequest, pictures []PictureUpload, stepPictures map[int]PictureUpload, fullPictureAccess bool) (models.Recipe, error) {
 	freshStepPictures := make(map[int]bool, len(stepPictures))
 	for i := range stepPictures {
 		freshStepPictures[i] = true
 	}
-	merged, err := mergePatch(recipe, patch, freshStepPictures)
+	merged, err := mergePatch(recipe, patch, freshStepPictures, fullPictureAccess)
 	if err != nil {
 		return models.Recipe{}, err
 	}
 	if err := validateRecipe(&merged); err != nil {
 		return models.Recipe{}, err
+	}
+	if merged.VariationOf != nil {
+		rootCategory, err := s.rootCategoryOf(merged.VariationOf)
+		if err != nil {
+			return models.Recipe{}, err
+		}
+		if merged.Category != rootCategory {
+			return models.Recipe{}, fmt.Errorf("%w: a variation's category must match its root recipe's category", ErrInvalid)
+		}
 	}
 	stepIndices, stepUploads, err := s.stepPictureUploads(stepPictures, len(merged.Steps))
 	if err != nil {
@@ -464,7 +610,7 @@ func (s *Service) Update(ctx context.Context, recipe models.Recipe, patch models
 	if err != nil {
 		return models.Recipe{}, err
 	}
-	merged.Pictures = append(merged.Pictures, recipeFilenames...)
+	merged.Pictures = regroupPictures(append(merged.Pictures, authorPictures(recipeFilenames)...))
 	for index, filename := range stepFilenames {
 		merged.Steps[index].Picture = filename
 	}
@@ -475,12 +621,12 @@ func (s *Service) Update(ctx context.Context, recipe models.Recipe, patch models
 		return models.Recipe{}, err
 	}
 	kept := make(map[string]bool, len(updated.Pictures))
-	for _, id := range updated.Pictures {
-		kept[id] = true
+	for _, picture := range updated.Pictures {
+		kept[picture.Filename] = true
 	}
-	for _, id := range recipe.Pictures {
-		if !kept[id] {
-			_ = images_manager.Remove(s.imageDir, id)
+	for _, picture := range recipe.Pictures {
+		if !kept[picture.Filename] {
+			_ = images_manager.Remove(s.imageDir, picture.Filename)
 		}
 	}
 	keptSteps := make(map[string]bool, len(updated.Steps))
@@ -497,6 +643,132 @@ func (s *Service) Update(ctx context.Context, recipe models.Recipe, patch models
 	_ = s.db.DeleteLocalizedRecipesByID(ctx, recipe.Id.Hex())
 	s.scheduleTranslations(updated)
 	updated.Locale = updated.SourceLocale
+	s.decoratePictureContributors(ctx, &updated)
+	return updated, nil
+}
+
+// decoratePictureContributors populates PictureOutputs from Pictures,
+// resolving each contributor's AddedBy id to a full UserView in one batched
+// lookup (an author-owned picture, AddedBy nil, needs no lookup). A lookup
+// failure is logged and leaves that picture's AddedBy unresolved (nil, same
+// as an author-owned picture) rather than failing the request.
+func (s *Service) decoratePictureContributors(ctx context.Context, recipe *models.Recipe) {
+	ids := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, picture := range recipe.Pictures {
+		if picture.AddedBy == nil {
+			continue
+		}
+		hex := picture.AddedBy.Hex()
+		if _, ok := seen[hex]; ok {
+			continue
+		}
+		seen[hex] = struct{}{}
+		ids = append(ids, hex)
+	}
+	var users map[string]models.UserView
+	if len(ids) > 0 {
+		var err error
+		users, err = s.db.GetUsersByIDs(ctx, ids)
+		if err != nil {
+			utils.LogError("could not load picture contributors", err)
+		}
+	}
+	outputs := make([]models.PictureOutput, 0, len(recipe.Pictures))
+	for _, picture := range recipe.Pictures {
+		output := models.PictureOutput{Filename: picture.Filename}
+		if picture.AddedBy != nil {
+			if user, ok := users[picture.AddedBy.Hex()]; ok {
+				output.AddedBy = &user
+			}
+		}
+		outputs = append(outputs, output)
+	}
+	recipe.PictureOutputs = outputs
+}
+
+// AddPicture adds one picture to recipe on behalf of userID. When userID is
+// not the recipe's author, the picture is attributed to them (a
+// contributor's picture) and counted against PictureCapPerContributor; the
+// recipe's own author has no cap. Like RemovePicture, this bypasses
+// SourceHash/translations entirely - pictures are structural, not
+// translatable content (see sourceHash, pickTranslation).
+func (s *Service) AddPicture(ctx context.Context, recipe models.Recipe, userID string, upload PictureUpload) (models.Recipe, error) {
+	isAuthor := recipe.Author != nil && recipe.Author.Id != nil && recipe.Author.Id.Hex() == userID
+	var addedBy *primitive.ObjectID
+	if !isAuthor {
+		count := 0
+		for _, picture := range recipe.Pictures {
+			if picture.AddedBy != nil && picture.AddedBy.Hex() == userID {
+				count++
+			}
+		}
+		if count >= PictureCapPerContributor {
+			return models.Recipe{}, ErrPictureCapReached
+		}
+		objectID, err := primitive.ObjectIDFromHex(userID)
+		if err != nil {
+			return models.Recipe{}, fmt.Errorf("%w: invalid user id", ErrInvalid)
+		}
+		addedBy = &objectID
+	}
+	normalized, err := s.normalizePictures([]PictureUpload{upload})
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	written, err := s.writePictures(normalized)
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	merged := recipe.ToRecipeDB()
+	merged.Locale = ""
+	merged.Pictures = regroupPictures(append(slices.Clone(merged.Pictures), models.RecipePicture{Filename: written[0], AddedBy: addedBy}))
+	updated, err := s.db.ReplaceRecipeById(ctx, recipe.Id.Hex(), merged)
+	if err != nil {
+		s.removePictures(written)
+		return models.Recipe{}, err
+	}
+	updated.Locale = updated.SourceLocale
+	s.decoratePictureContributors(ctx, &updated)
+	return updated, nil
+}
+
+// RemovePicture removes one picture from recipe. Allowed when callerID is
+// the recipe's author, callerIsAdmin is set (an admin moderating a recipe
+// they don't own), or callerID is that picture's own contributor.
+func (s *Service) RemovePicture(ctx context.Context, recipe models.Recipe, filename, callerID string, callerIsAdmin bool) (models.Recipe, error) {
+	index := -1
+	for i, picture := range recipe.Pictures {
+		if picture.Filename == filename {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return models.Recipe{}, ErrPictureNotFound
+	}
+	picture := recipe.Pictures[index]
+	isAuthor := recipe.Author != nil && recipe.Author.Id != nil && recipe.Author.Id.Hex() == callerID
+	isOwnPicture := picture.AddedBy != nil && picture.AddedBy.Hex() == callerID
+	if !callerIsAdmin && !isAuthor && !isOwnPicture {
+		return models.Recipe{}, ErrForbidden
+	}
+	merged := recipe.ToRecipeDB()
+	merged.Locale = ""
+	remaining := make([]models.RecipePicture, 0, len(merged.Pictures))
+	for _, p := range merged.Pictures {
+		if p.Filename != filename {
+			remaining = append(remaining, p)
+		}
+	}
+	merged.Pictures = remaining
+	updated, err := s.db.ReplaceRecipeById(ctx, recipe.Id.Hex(), merged)
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	_ = images_manager.Remove(s.imageDir, filename)
+	updated.Locale = updated.SourceLocale
+	s.decoratePictureContributors(ctx, &updated)
 	return updated, nil
 }
 
@@ -547,6 +819,7 @@ func (s *Service) Get(ctx context.Context, recipeID, locale, userID string) (mod
 	s.decorateFamilyFavorite(ctx, &localized, userID)
 	s.decorateVariationCount(ctx, &localized)
 	s.decorateRefTitle(ctx, &localized)
+	s.decoratePictureContributors(ctx, &localized)
 	return localized, nil
 }
 
@@ -824,6 +1097,7 @@ func pickTranslation(canonical, translation models.Recipe, requested string, fou
 	if found && translation.SourceHash != "" && translation.SourceHash == canonical.SourceHash {
 		translation.Locale = requested
 		translation.VariationOf = canonical.VariationOf
+		translation.Pictures = canonical.Pictures
 		return translation
 	}
 	canonical.Locale = canonical.SourceLocale
@@ -948,6 +1222,41 @@ func (s *Service) ListDetailedForUser(ctx context.Context, userID, cursor string
 	return recipes, count, next, nil
 }
 
+// Search returns a page of full recipes (not previews) matching parameters,
+// across every user - not just an author-scoped listing - for MCP's
+// search_recipes tool to discover a fork target for create_recipe's
+// variation_of. It reuses GetRecipeDocuments' family-collapsed
+// filter/sort pipeline (the same one the public REST listing uses), driven
+// by an offset rather than parameters.Offset/Limit directly, so the MCP tool
+// can expose an opaque cursor instead of raw pagination numbers. hasNext
+// reports whether another page exists; nextOffset is only meaningful when it
+// does.
+func (s *Service) Search(ctx context.Context, parameters models.GetRecipesRequest, offset, limit int) (recipes []models.Recipe, total int64, nextOffset int, hasNext bool, err error) {
+	locale, err := normalizeLocale(parameters.Locale)
+	if err != nil {
+		return nil, 0, 0, false, err
+	}
+	parameters.Locale = locale
+	parameters.Offset = offset
+	parameters.Limit = limit + 1
+	documents, count, err := s.db.GetRecipeDocuments(parameters)
+	if err != nil {
+		return nil, 0, 0, false, err
+	}
+	if hasNext = len(documents) > limit; hasNext {
+		documents = documents[:limit]
+		nextOffset = offset + limit
+	}
+	recipes = s.localizeBatch(ctx, documents, parameters.Locale)
+	s.decorateVariationCounts(ctx, recipes)
+	refs := make([]*models.Recipe, len(recipes))
+	for i := range recipes {
+		refs[i] = &recipes[i]
+	}
+	s.decorateRefTitles(ctx, refs)
+	return recipes, count, nextOffset, hasNext, nil
+}
+
 // localizeBatch resolves each document's best-matching translation (or
 // falls back to canonical) in one batched translations lookup - the shared
 // core of localizePreviews and ListDetailedForUser.
@@ -987,7 +1296,7 @@ func (s *Service) localizePreviews(ctx context.Context, documents []models.Recip
 		previews = append(previews, models.RecipePreview{
 			Id: recipe.Id, Title: recipe.Title, Description: recipe.Description, Author: recipe.Author,
 			PreparationTime: recipe.PreparationTime, CookingTime: recipe.CookingTime, RestingTime: recipe.RestingTime,
-			Kind: recipe.Kind, Category: recipe.Category, Quantity: recipe.Quantity, Pictures: recipe.Pictures,
+			Kind: recipe.Kind, Category: recipe.Category, Quantity: recipe.Quantity, Pictures: pictureFilenames(recipe.Pictures),
 			SourceLocale: recipe.SourceLocale, Locale: recipe.Locale, VariationOf: recipe.VariationOf,
 		})
 	}
@@ -1045,7 +1354,7 @@ func (s *Service) Delete(ctx context.Context, recipeID string) (models.RecipeDB,
 		return models.RecipeDB{}, err
 	}
 	for _, picture := range deleted.Pictures {
-		_ = images_manager.Remove(s.imageDir, picture)
+		_ = images_manager.Remove(s.imageDir, picture.Filename)
 	}
 	for _, step := range deleted.Steps {
 		if step.Picture != "" {
@@ -1055,4 +1364,98 @@ func (s *Service) Delete(ctx context.Context, recipeID string) (models.RecipeDB,
 	_ = s.db.DeleteLocalizedRecipesByID(ctx, recipeID)
 	_ = s.db.DeleteFavoritesByRecipeID(ctx, recipeID)
 	return deleted, nil
+}
+
+// LinkVariation turns recipeID, a standalone recipe (VariationOf == nil, no
+// variations of its own), into a variation of targetID, a genuine root
+// (never auto-flattened, unlike Create's variation_of - the caller must pass
+// the actual root). Reachable by the recipe's own author or an admin (see
+// handlers.RecipeAuthorMiddleware). Guards, in order: not the same recipe,
+// source isn't already a variation, source has no variations of its own,
+// target exists and is a root, categories match, and neither side's family
+// already references the other (see ErrReferenceLoop) - the reference-loop
+// check that Create's variation_of never needed, since linking (unlike
+// submitting a new recipe) can retroactively join two families that already
+// carry independent RecipeRef ingredients.
+func (s *Service) LinkVariation(ctx context.Context, recipeID, targetID string) (models.Recipe, error) {
+	if _, err := primitive.ObjectIDFromHex(recipeID); err != nil {
+		return models.Recipe{}, ErrNotFound
+	}
+	if _, err := primitive.ObjectIDFromHex(targetID); err != nil {
+		return models.Recipe{}, fmt.Errorf("%w: invalid variation_of", ErrInvalid)
+	}
+	if recipeID == targetID {
+		return models.Recipe{}, fmt.Errorf("%w: a recipe cannot be a variation of itself", ErrInvalid)
+	}
+	source, err := s.db.GetRecipeById(recipeID)
+	if err != nil {
+		if errors.Is(err, mongorepo.NotFoundError) {
+			return models.Recipe{}, ErrNotFound
+		}
+		return models.Recipe{}, err
+	}
+	if source.VariationOf != nil {
+		return models.Recipe{}, ErrAlreadyVariation
+	}
+	counts, err := s.db.GetVariationCounts(ctx, []string{recipeID})
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	if counts[recipeID] > 0 {
+		return models.Recipe{}, ErrRecipeHasVariations
+	}
+	target, err := s.db.GetRecipeById(targetID)
+	if err != nil {
+		if errors.Is(err, mongorepo.NotFoundError) {
+			return models.Recipe{}, ErrNotFound
+		}
+		return models.Recipe{}, err
+	}
+	if target.VariationOf != nil {
+		return models.Recipe{}, ErrTargetIsVariation
+	}
+	if defaultCategory(source.Category) != defaultCategory(target.Category) {
+		return models.Recipe{}, ErrCategoryMismatch
+	}
+	for _, ingredient := range source.Ingredients {
+		if ingredient.RecipeRef != nil && ingredient.RecipeRef.Hex() == targetID {
+			return models.Recipe{}, ErrReferenceLoop
+		}
+	}
+	referencesSource, err := s.db.FamilyReferencesRecipe(ctx, targetID, recipeID)
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	if referencesSource {
+		return models.Recipe{}, ErrReferenceLoop
+	}
+	if err := s.db.SetVariationOf(ctx, recipeID, targetID); err != nil {
+		return models.Recipe{}, err
+	}
+	return s.Get(ctx, recipeID, "", "")
+}
+
+// DetachVariation clears recipeID's VariationOf, turning a variation back
+// into its own standalone root - the one way back once LinkVariation (or
+// submitting a variation at creation time) has joined a family. Admin only
+// (see handlers.AdminDetachRecipeVariation); irreversible from the app's own
+// UI once done, same as any other admin action here has no undo.
+func (s *Service) DetachVariation(ctx context.Context, recipeID string) (models.Recipe, error) {
+	if _, err := primitive.ObjectIDFromHex(recipeID); err != nil {
+		return models.Recipe{}, ErrNotFound
+	}
+	recipe, err := s.db.GetRecipeById(recipeID)
+	if err != nil {
+		if errors.Is(err, mongorepo.NotFoundError) {
+			return models.Recipe{}, ErrNotFound
+		}
+		return models.Recipe{}, err
+	}
+	if recipe.VariationOf == nil {
+		return models.Recipe{}, ErrNotVariation
+	}
+	if err := s.db.PromoteRecipeToRoot(ctx, recipeID); err != nil {
+		return models.Recipe{}, err
+	}
+	return s.Get(ctx, recipeID, "", "")
 }
