@@ -77,11 +77,20 @@ func (t *Translator) TranslateRecipe(recipe models.Recipe, to string) (models.Re
 		if ingredient.Label != "" {
 			label = ingLabel[i].Text
 		}
+		name := ingName[i].Text
+		if ingredient.RecipeRef != nil {
+			// A reference ingredient's Name is always empty (see
+			// validateRecipe) - preserve that instead of trusting
+			// whatever the translate API returns for an empty input.
+			name = ""
+		}
 		ing = append(ing, models.Ingredient{
-			Name:     ingName[i].Text,
-			Quantity: ingredient.Quantity,
-			Unit:     ingUnit[i].Text,
-			Label:    label,
+			Name:      name,
+			Quantity:  ingredient.Quantity,
+			Unit:      ingUnit[i].Text,
+			Label:     label,
+			RecipeRef: ingredient.RecipeRef,
+			RefLabel:  ingredient.RefLabel,
 		})
 	}
 	var st []models.Step
