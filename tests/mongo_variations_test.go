@@ -135,8 +135,8 @@ func TestGetRecipeDocumentsCategoryFiltering(t *testing.T) {
 	require.Len(t, diyList, 1)
 	assert.Equal(t, diy.Hex(), diyList[0].Id.Hex())
 
-	// OwnRecipes stays category-agnostic - it returns every recipe by the
-	// author regardless of category.
+	// OwnRecipes stays category-agnostic when Category is left unset - it
+	// returns every recipe by the author regardless of category.
 	ownRecipes, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, OwnRecipes: true, Author: "category-author"})
 	require.NoError(t, err)
 	ownIDs := make([]string, len(ownRecipes))
@@ -144,6 +144,13 @@ func TestGetRecipeDocumentsCategoryFiltering(t *testing.T) {
 		ownIDs[i] = r.Id.Hex()
 	}
 	assert.ElementsMatch(t, []string{food.Hex(), diy.Hex(), legacy.Hex()}, ownIDs)
+
+	// OwnRecipes with an explicit category=diy narrows to just DIY entries -
+	// this is what the admin back-office's DIY moderation tab relies on.
+	ownDiy, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, OwnRecipes: true, Category: models.Diy})
+	require.NoError(t, err)
+	require.Len(t, ownDiy, 1)
+	assert.Equal(t, diy.Hex(), ownDiy[0].Id.Hex())
 }
 
 func TestGetRecipeDocumentsSearchSurfacesRootViaVariation(t *testing.T) {

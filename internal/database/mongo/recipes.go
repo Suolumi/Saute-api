@@ -250,8 +250,15 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "variation_of", Value: variationOfID}}}})
 		}
 	case parameters.OwnRecipes:
-		// "My Recipes": no collapsing - every recipe matching Author is
-		// listed flatly, roots and variations alike (see decision #4).
+		// "My Recipes"/admin moderation: no collapsing - every recipe
+		// matching Author is listed flatly, roots and variations alike (see
+		// decision #4). Category is otherwise agnostic here, except an
+		// explicit "diy" narrows to just DIY entries - the admin
+		// back-office's DIY tab reuses this same flat listing with
+		// category=diy rather than needing its own pipeline branch.
+		if parameters.Category == models.Diy {
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: models.Diy}}}})
+		}
 	default:
 		// Default public discovery listing: collapse each family to its
 		// root.

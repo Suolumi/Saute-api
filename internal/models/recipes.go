@@ -62,8 +62,12 @@ type GetRecipesRequest struct {
 	// collapsed listing; when empty or "food", that listing excludes diy
 	// (see buildRecipeFilterPipeline - this is not a generic equality
 	// filter, existing recipes predate this field and must still show up
-	// under "food"). Ignored by variation_of/own_recipes listings, which are
-	// category-agnostic by design.
+	// under "food"). Ignored by variation_of listings (a variation always
+	// shares its root's category, so filtering is moot there). For
+	// own_recipes listings, only an explicit "diy" narrows the results (to
+	// just DIY - the admin back-office's DIY moderation tab); left empty
+	// (Settings' own-recipes fetch, and the admin Recipes tab) it stays
+	// category-agnostic, same as before.
 	Category     RecipeCategory `query:"category,omitempty"`
 	Locale       string         `query:"locale,omitempty"`
 	SearchLocale string         `query:"search_locale,omitempty"`
