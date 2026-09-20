@@ -1131,7 +1131,10 @@ func (s *Service) localize(canonical models.Recipe, requested string) models.Rec
 // favorite status, and if parameters.Favorite is set, every recipe userID has
 // favorited (matching the filters) is returned first, unpaginated, ahead of a
 // normal paginated page of the non-favorited remainder — see
-// Store.GetRecipeDocumentsBoosted.
+// Store.GetRecipeDocumentsBoosted. If parameters.FavoritesOnly is set instead,
+// only recipes userID has favorited are returned (see
+// buildRecipeFilterPipeline) — an anonymous request in that mode gets an
+// empty page rather than leaking every recipe as "favorited".
 func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest, userID string) ([]models.RecipePreview, int64, error) {
 	locale, err := normalizeLocale(parameters.Locale)
 	if err != nil {
@@ -1146,7 +1149,16 @@ func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest,
 
 	var documents []models.Recipe
 	var count int64
-	if parameters.Favorite && userID != "" {
+	if parameters.FavoritesOnly {
+		if userID == "" {
+			return []models.RecipePreview{}, 0, nil
+		}
+		parameters.FavoritedByUserID = userID
+		documents, count, err = s.db.GetRecipeDocuments(parameters)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else if parameters.Favorite && userID != "" {
 		favorited, rest, total, err := s.db.GetRecipeDocumentsBoosted(ctx, userID, parameters)
 		if err != nil {
 			return nil, 0, err
@@ -1161,9 +1173,9 @@ func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest,
 	}
 
 	previews := s.localizePreviews(ctx, documents, parameters.Locale)
-	if parameters.OwnRecipes {
-		// "My Recipes": each entry's own individual favorite count, not the
-		// family aggregate (decision #4).
+	if parameters.OwnRecipes || parameters.FavoritesOnly {
+		// "My Recipes"/"My Favorites": each entry's own individual favorite
+		// count, not the family aggregate (decision #4).
 		s.decorateFavoritePreviews(ctx, previews, userID)
 	} else {
 		s.decorateFamilyFavoritePreviews(ctx, previews, userID)

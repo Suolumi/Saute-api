@@ -80,6 +80,22 @@ type GetRecipesRequest struct {
 	// and favorite decoration is per-recipe instead of family-aggregate. Set
 	// only by the Settings page's own-recipes fetch.
 	OwnRecipes bool `query:"own_recipes,omitempty"`
+	// FavoritesOnly switches List into "My Favorites" mode: only recipes the
+	// caller has exactly favorited are returned - flat, not family-collapsed
+	// (the exact variation favorited is what's listed, not its root), sorted
+	// alphabetically by default rather than newest-first. Unlike Favorite's
+	// boost-to-front behavior, this excludes everything else instead of just
+	// reordering. Unlike OwnRecipes' category-agnostic default, Category here
+	// always narrows (food excludes diy, same as the default discovery
+	// listing) since My Favorites is split into separate Recipes/DIY
+	// sub-tabs. Set only by the Settings page's My Favorites fetch.
+	FavoritesOnly bool `query:"favorites_only,omitempty"`
+	// FavoritedByUserID is never bound from the query string (BindQuery skips
+	// fields whose tag has no name, and this one's is deliberately "-") - it's
+	// set server-side by Service.List to the caller's own user id when
+	// FavoritesOnly is set, and drives the favorites $lookup in
+	// buildRecipeFilterPipeline.
+	FavoritedByUserID string `query:"-"`
 	// ExcludeFamily hides that root id from a listing - used by the "add
 	// recipe as ingredient" picker so a recipe can't offer itself or its own
 	// family as a reference target. UX nicety only; the authoritative

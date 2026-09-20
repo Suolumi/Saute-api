@@ -155,3 +155,67 @@ func TestGetRecipeDocumentsBoostedPartitionsFavoritesFirst(t *testing.T) {
 	require.Len(t, page2Rest, 1)
 	assert.NotEqual(t, page1Rest[0].Id.Hex(), page2Rest[0].Id.Hex(), "offset must page through the non-favorited remainder, not repeat it")
 }
+
+// TestGetRecipeDocumentsFavoritesOnly guards the "My Favorites" listing mode:
+// only the exact recipes the caller favorited come back (never another
+// user's un-favorited recipes, never the un-favorited sibling in a family),
+// narrowed by category the same way the default listing is, and sorted
+// alphabetically by title rather than newest-first.
+func TestGetRecipeDocumentsFavoritesOnly(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	author := insertTestUser(t, db, ctx, "myfav-author")
+	user := insertTestUser(t, db, ctx, "myfav-user")
+
+	root := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Zebra Cake",
+		"ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish",
+	})
+	variation := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Apple Cake V2", "variation_of": root,
+		"ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish",
+	})
+	unfavorited := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Mango Cake",
+		"ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish",
+	})
+	diyItem := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Bar Soap", "category": "diy",
+		"ingredients": bson.A{bson.M{"name": "lye"}},
+	})
+
+	require.NoError(t, db.AddFavorite(ctx, user.Hex(), root.Hex()))
+	require.NoError(t, db.AddFavorite(ctx, user.Hex(), variation.Hex()))
+	require.NoError(t, db.AddFavorite(ctx, user.Hex(), diyItem.Hex()))
+	// unfavorited stays un-favorited; another user's favorite must not leak in.
+	otherUser := insertTestUser(t, db, ctx, "myfav-other")
+	require.NoError(t, db.AddFavorite(ctx, otherUser.Hex(), unfavorited.Hex()))
+
+	foodFavorites, count, err := db.GetRecipeDocuments(models.GetRecipesRequest{
+		Limit: 10, FavoritesOnly: true, FavoritedByUserID: user.Hex(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+	require.Len(t, foodFavorites, 2)
+	// Flat, not family-collapsed: both the root and the variation the user
+	// favorited show up as distinct entries. Alphabetical by title: "Apple"
+	// before "Zebra".
+	assert.Equal(t, variation.Hex(), foodFavorites[0].Id.Hex())
+	assert.Equal(t, root.Hex(), foodFavorites[1].Id.Hex())
+
+	diyFavorites, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{
+		Limit: 10, FavoritesOnly: true, FavoritedByUserID: user.Hex(), Category: models.Diy,
+	})
+	require.NoError(t, err)
+	require.Len(t, diyFavorites, 1)
+	assert.Equal(t, diyItem.Hex(), diyFavorites[0].Id.Hex())
+
+	// Anonymous/empty caller id: fail closed, never leak every recipe.
+	anonFavorites, anonCount, err := db.GetRecipeDocuments(models.GetRecipesRequest{
+		Limit: 10, FavoritesOnly: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), anonCount)
+	assert.Empty(t, anonFavorites)
+}

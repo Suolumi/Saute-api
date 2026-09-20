@@ -241,13 +241,44 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 		}
 	}
 
-	isFamilyListing := parameters.VariationOf == "" && !parameters.OwnRecipes
+	isFamilyListing := parameters.VariationOf == "" && !parameters.OwnRecipes && !parameters.FavoritesOnly
 
 	switch {
 	case parameters.VariationOf != "":
 		// List only the variations of the given recipe id, never the root.
 		if variationOfID, err := primitive.ObjectIDFromHex(parameters.VariationOf); err == nil {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "variation_of", Value: variationOfID}}}})
+		}
+	case parameters.FavoritesOnly:
+		// "My Favorites": flat, exact-recipe listing narrowed to whatever
+		// FavoritedByUserID has favorited - never family-resolved, unlike the
+		// boosting path's favoritedRecipeIDs, since the exact variation
+		// favorited is what should show up here.
+		if userObjectID, err := primitive.ObjectIDFromHex(parameters.FavoritedByUserID); err == nil {
+			pipeline = append(pipeline, bson.D{{Key: "$lookup", Value: bson.D{
+				{Key: "from", Value: favoritesCollection},
+				{Key: "let", Value: bson.D{{Key: "recipeID", Value: "$_id"}}},
+				{Key: "pipeline", Value: mongo.Pipeline{{{Key: "$match", Value: bson.D{
+					{Key: "$expr", Value: bson.D{{Key: "$eq", Value: bson.A{"$recipe", "$$recipeID"}}}},
+					{Key: "users", Value: userObjectID},
+				}}}}},
+				{Key: "as", Value: "own_favorite"},
+			}}})
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "own_favorite", Value: bson.D{{Key: "$ne", Value: bson.A{}}}}}}})
+			pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "own_favorite"}})
+		} else {
+			// No caller id resolved (Service.List guards against this in
+			// practice) - fail closed instead of leaking every recipe as
+			// "favorited".
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: primitive.NilObjectID}}}})
+		}
+		// Always narrows by category, like the default discovery listing -
+		// unlike OwnRecipes below, since My Favorites is split into separate
+		// Recipes/DIY sub-tabs rather than being category-agnostic.
+		if parameters.Category == models.Diy {
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: models.Diy}}}})
+		} else {
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: bson.D{{Key: "$ne", Value: models.Diy}}}}}})
 		}
 	case parameters.OwnRecipes:
 		// "My Recipes"/admin moderation: no collapsing - every recipe
@@ -400,6 +431,10 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 // variation promotes its whole family back to the top instead of sitting
 // buried under however old the root is.
 func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
+	if parameters.FavoritesOnly {
+		return favoritesSortStages(parameters)
+	}
+
 	sortKey := "_id"
 	if parameters.VariationOf == "" && !parameters.OwnRecipes {
 		sortKey = "family_sort_id"
@@ -409,6 +444,24 @@ func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 		return []bson.D{{{Key: "$sort", Value: bson.D{{Key: sortKey, Value: -1}}}}}
 	}
 
+	stages, differenceFields := timeDifferenceStages(parameters)
+	stages = append(stages, bson.D{{Key: "$addFields", Value: bson.D{
+		{Key: "combinedDifference", Value: bson.D{
+			{Key: "$add", Value: differenceFields},
+		}},
+	}}}, bson.D{{Key: "$sort", Value: bson.D{
+		{Key: "combinedDifference", Value: 1},
+		{Key: sortKey, Value: -1},
+	}}})
+	return stages
+}
+
+// timeDifferenceStages returns the $addFields stage(s) computing, per
+// candidate document, its absolute difference from parameters'
+// preparation/total time target(s) - shared by buildRecipeSortStages and
+// favoritesSortStages, which each combine and sort by these fields
+// differently (newest-first vs alphabetical ties).
+func timeDifferenceStages(parameters models.GetRecipesRequest) ([]bson.D, bson.A) {
 	var stages []bson.D
 	differenceFields := bson.A{}
 	// preparation_time/cooking_time/resting_time are plain ints with
@@ -447,14 +500,31 @@ func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 		}}})
 		differenceFields = append(differenceFields, "$diffTotalTime")
 	}
-	stages = append(stages, bson.D{{Key: "$addFields", Value: bson.D{
+	return stages, differenceFields
+}
+
+// favoritesSortStages sorts My Favorites alphabetically by title
+// (case-insensitive) by default - unlike every other listing, which defaults
+// to newest-first. When a ready-in-time target is given, closeness to that
+// target still takes priority (matching every other listing's behavior for
+// the same filter), with ties broken alphabetically instead of newest-first.
+func favoritesSortStages(parameters models.GetRecipesRequest) []bson.D {
+	addSortTitle := bson.D{{Key: "$addFields", Value: bson.D{{Key: "sort_title", Value: bson.D{{Key: "$toLower", Value: "$title"}}}}}}
+	unsetSortTitle := bson.D{{Key: "$unset", Value: "sort_title"}}
+
+	if parameters.PreparationTime == 0 && parameters.TotalTime == 0 {
+		return []bson.D{addSortTitle, {{Key: "$sort", Value: bson.D{{Key: "sort_title", Value: 1}}}}, unsetSortTitle}
+	}
+
+	stages, differenceFields := timeDifferenceStages(parameters)
+	stages = append(stages, addSortTitle, bson.D{{Key: "$addFields", Value: bson.D{
 		{Key: "combinedDifference", Value: bson.D{
 			{Key: "$add", Value: differenceFields},
 		}},
 	}}}, bson.D{{Key: "$sort", Value: bson.D{
 		{Key: "combinedDifference", Value: 1},
-		{Key: sortKey, Value: -1},
-	}}})
+		{Key: "sort_title", Value: 1},
+	}}}, unsetSortTitle)
 	return stages
 }
 
