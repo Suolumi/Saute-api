@@ -60,7 +60,7 @@ type SearchInput struct {
 // recipe id to use as an ingredient reference.
 type IngredientInput struct {
 	Name     string  `json:"name" jsonschema:"Ingredient name, e.g. 'Egg' or 'Thyme'"`
-	Quantity float64 `json:"quantity" jsonschema:"Numeric amount, e.g. 3 or 0.5"`
+	Quantity float64 `json:"quantity,omitempty" jsonschema:"Numeric amount, e.g. 3 or 0.5. Omit for ingredients with no meaningful quantity, e.g. 'salt to taste'"`
 	Unit     string  `json:"unit,omitempty" jsonschema:"Optional unit shown between quantity and name. Leave empty for a bare count, e.g. quantity 3 + name 'Egg' renders as '3 Egg'. Set it for a unit of measure or descriptor, e.g. quantity 3 + unit 'leaves' + name 'Thyme' renders as '3 leaves - Thyme'"`
 	Label    string  `json:"label,omitempty" jsonschema:"Optional section heading grouping this ingredient with others that share the exact same label, e.g. 'For the dough' or 'For the filling'."`
 }
@@ -229,7 +229,7 @@ func New(cfg *config.MCPConfig, recipes *recipe_service.Service, verifier auth.T
 	mcp.AddTool(server, &mcp.Tool{Name: "list_my_recipes", Description: "List the authenticated user's recipes with cursor pagination and optional localization."}, result.list)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_my_recipe", Description: "Get one recipe owned by the authenticated user, optionally localized."}, result.get)
 	mcp.AddTool(server, &mcp.Tool{Name: "search_recipes", Description: "Search every user's recipes (not just the authenticated user's own) by title, kind, category, author, ingredients, or closeness to a target preparation/total time. Results are grouped by recipe family (one entry per root, with variation_count) unless variation_of is set, which instead lists that family's individual variations. Use this to find a recipe id to pass as create_recipe's variation_of."}, result.search)
-	mcp.AddTool(server, &mcp.Tool{Name: "create_recipe", Description: "Create a complete recipe owned by the authenticated user. Pictures are not supported here; attach them via the website. Set variation_of (found via search_recipes) to submit this as a variation of an existing recipe instead of a new root."}, result.create)
+	mcp.AddTool(server, &mcp.Tool{Name: "create_recipe", Description: "Create a complete recipe owned by the authenticated user. Pictures are not supported here; attach them via the website. Set variation_of (found via search_recipes) to submit this as a variation of an existing recipe instead of a new root. Each ingredient needs only a name - quantity, unit, and label are all optional."}, result.create)
 	mcp.AddTool(server, &mcp.Tool{Name: "update_recipe", Description: "Patch a recipe owned by the authenticated user and optionally reorder or remove existing pictures via keep_picture_ids. New pictures cannot be uploaded here; attach them via the website."}, result.update)
 	mcp.AddTool(server, &mcp.Tool{Name: "link_recipe_variation", Description: "Turn one of the authenticated user's own standalone recipes into a variation of another recipe (any author), found via search_recipes. Fails if the recipe is already a variation, already has its own variations, the target is itself a variation, categories don't match, or it would create a recipe that references its own family. Irreversible through this API."}, result.linkVariation)
 	stream := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
