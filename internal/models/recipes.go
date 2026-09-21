@@ -50,14 +50,21 @@ func (p *RecipePicture) UnmarshalBSONValue(t bsontype.Type, data []byte) error {
 }
 
 type GetRecipesRequest struct {
-	Limit           int        `query:"limit,omitempty"`
-	Offset          int        `query:"offset,omitempty"`
-	Author          string     `query:"author,omitempty"`
-	Title           string     `query:"title,omitempty"`
-	PreparationTime int        `query:"preparation_time,omitempty"`
-	TotalTime       int        `query:"total_time"`
-	Ingredients     []string   `query:"ingredients,omitempty"`
-	Kind            RecipeKind `query:"kind,omitempty"`
+	Limit           int    `query:"limit,omitempty"`
+	Offset          int    `query:"offset,omitempty"`
+	Author          string `query:"author,omitempty"`
+	Title           string `query:"title,omitempty"`
+	PreparationTime int    `query:"preparation_time,omitempty"`
+	TotalTime       int    `query:"total_time"`
+	// QuickestPrep/QuickestTotal request the "Quickest" ready-in preset: sort
+	// by the actual preparation/total time ascending instead of closeness to
+	// a target minutes value. The site only ever sends one of these two, or
+	// PreparationTime/TotalTime, never both kinds together for the same
+	// listing - see buildRecipeSortStages.
+	QuickestPrep  bool       `query:"quickest_prep,omitempty"`
+	QuickestTotal bool       `query:"quickest_total,omitempty"`
+	Ingredients   []string   `query:"ingredients,omitempty"`
+	Kind          RecipeKind `query:"kind,omitempty"`
 	// Category, when "diy", lists only DIY recipes on the default/family-
 	// collapsed listing; when empty or "food", that listing excludes diy
 	// (see buildRecipeFilterPipeline - this is not a generic equality

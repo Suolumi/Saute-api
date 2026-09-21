@@ -423,10 +423,12 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 	return pipeline
 }
 
-// buildRecipeSortStages returns the sort stage(s) for parameters: either the
-// plain newest-first sort, or (when a preparation/total time target is given)
-// a sort by closeness to that target, ties broken newest-first. On the
-// default family-collapsed listing, "newest" is family_sort_id (see
+// buildRecipeSortStages returns the sort stage(s) for parameters: the plain
+// newest-first sort; a sort by closeness to a target when a preparation/
+// total time target is given; or, for the "Quickest" preset (QuickestPrep/
+// QuickestTotal), a sort by the actual time ascending - ties broken
+// newest-first in every time-filtered case. On the default family-collapsed
+// listing, "newest" is family_sort_id (see
 // buildRecipeFilterPipeline) rather than the root's own _id, so a fresh
 // variation promotes its whole family back to the top instead of sitting
 // buried under however old the root is.
@@ -438,6 +440,14 @@ func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 	sortKey := "_id"
 	if parameters.VariationOf == "" && !parameters.OwnRecipes {
 		sortKey = "family_sort_id"
+	}
+
+	if stages, field, ok := quickestSortStage(parameters); ok {
+		stages = append(stages, bson.D{{Key: "$sort", Value: bson.D{
+			{Key: field, Value: 1},
+			{Key: sortKey, Value: -1},
+		}}})
+		return stages
 	}
 
 	if parameters.PreparationTime == 0 && parameters.TotalTime == 0 {
@@ -456,6 +466,39 @@ func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 	return stages
 }
 
+// zeroIfMissing treats a missing preparation_time/cooking_time/resting_time
+// field as 0. Those fields are plain ints with `omitempty` bson tags, so a
+// zero-minute value is stored as a missing field rather than 0; $add/
+// $subtract return null (not 0) for a missing field, and null sorts before
+// every real number - without this, any recipe missing one of these fields
+// would always sort first regardless of its actual time.
+func zeroIfMissing(field string) bson.D {
+	return bson.D{{Key: "$ifNull", Value: bson.A{field, 0}}}
+}
+
+// quickestSortStage returns the $addFields stage plus the field name to sort
+// ascending by, for the "Quickest" ready-in preset (QuickestPrep/
+// QuickestTotal): the recipe's actual preparation/total time, rather than
+// closeness to a target minutes value. ok is false when neither is set.
+func quickestSortStage(parameters models.GetRecipesRequest) (stages []bson.D, field string, ok bool) {
+	switch {
+	case parameters.QuickestPrep:
+		return []bson.D{{{Key: "$addFields", Value: bson.D{
+			{Key: "quickestTime", Value: zeroIfMissing("$preparation_time")},
+		}}}}, "quickestTime", true
+	case parameters.QuickestTotal:
+		return []bson.D{{{Key: "$addFields", Value: bson.D{
+			{Key: "quickestTime", Value: bson.D{{Key: "$add", Value: bson.A{
+				zeroIfMissing("$preparation_time"),
+				zeroIfMissing("$cooking_time"),
+				zeroIfMissing("$resting_time"),
+			}}}},
+		}}}}, "quickestTime", true
+	default:
+		return nil, "", false
+	}
+}
+
 // timeDifferenceStages returns the $addFields stage(s) computing, per
 // candidate document, its absolute difference from parameters'
 // preparation/total time target(s) - shared by buildRecipeSortStages and
@@ -464,15 +507,6 @@ func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 func timeDifferenceStages(parameters models.GetRecipesRequest) ([]bson.D, bson.A) {
 	var stages []bson.D
 	differenceFields := bson.A{}
-	// preparation_time/cooking_time/resting_time are plain ints with
-	// `omitempty` bson tags, so a zero-minute value is stored as a missing
-	// field rather than 0. $add/$subtract return null (not 0) for a missing
-	// field, and null sorts before every real number - without $ifNull, any
-	// recipe missing one of these fields would always sort first regardless
-	// of actual closeness to the target.
-	zeroIfMissing := func(field string) bson.D {
-		return bson.D{{Key: "$ifNull", Value: bson.A{field, 0}}}
-	}
 	if parameters.PreparationTime != 0 {
 		stages = append(stages, bson.D{{Key: "$addFields", Value: bson.D{
 			{Key: "diffPrepTime", Value: bson.D{
@@ -505,12 +539,20 @@ func timeDifferenceStages(parameters models.GetRecipesRequest) ([]bson.D, bson.A
 
 // favoritesSortStages sorts My Favorites alphabetically by title
 // (case-insensitive) by default - unlike every other listing, which defaults
-// to newest-first. When a ready-in-time target is given, closeness to that
-// target still takes priority (matching every other listing's behavior for
+// to newest-first. A ready-in-time filter (a target, or the "Quickest"
+// preset) still takes priority (matching every other listing's behavior for
 // the same filter), with ties broken alphabetically instead of newest-first.
 func favoritesSortStages(parameters models.GetRecipesRequest) []bson.D {
 	addSortTitle := bson.D{{Key: "$addFields", Value: bson.D{{Key: "sort_title", Value: bson.D{{Key: "$toLower", Value: "$title"}}}}}}
 	unsetSortTitle := bson.D{{Key: "$unset", Value: "sort_title"}}
+
+	if stages, field, ok := quickestSortStage(parameters); ok {
+		stages = append(stages, addSortTitle, bson.D{{Key: "$sort", Value: bson.D{
+			{Key: field, Value: 1},
+			{Key: "sort_title", Value: 1},
+		}}}, unsetSortTitle)
+		return stages
+	}
 
 	if parameters.PreparationTime == 0 && parameters.TotalTime == 0 {
 		return []bson.D{addSortTitle, {{Key: "$sort", Value: bson.D{{Key: "sort_title", Value: 1}}}}, unsetSortTitle}
