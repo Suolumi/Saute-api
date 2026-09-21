@@ -39,10 +39,11 @@ func TestGetRecipeDocumentsVariationFiltering(t *testing.T) {
 		"ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish",
 	})
 
-	// Default listing collapses to the root only.
+	// Default listing collapses to the root only, but the count still
+	// reflects every recipe folded into the family (root + variation).
 	defaultList, count, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), count)
+	assert.Equal(t, int64(2), count)
 	require.Len(t, defaultList, 1)
 	assert.Equal(t, root.Hex(), defaultList[0].Id.Hex())
 
@@ -237,7 +238,9 @@ func TestGetRecipeDocumentsBoostedTreatsVariationFavoriteAsFamilyFavorite(t *tes
 	assert.Equal(t, root.Hex(), favorited[0].Id.Hex(), "the root must be boosted since its variation was favorited")
 	require.Len(t, rest, 1)
 	assert.Equal(t, other.Hex(), rest[0].Id.Hex())
-	assert.Equal(t, int64(2), total)
+	// 2 individual recipes in the root's family (root + variation) + 1 for
+	// other, not 2 families.
+	assert.Equal(t, int64(3), total)
 }
 
 func TestVariationCountsAndPromotion(t *testing.T) {

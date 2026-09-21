@@ -61,10 +61,17 @@ type GetRecipesRequest struct {
 	// a target minutes value. The site only ever sends one of these two, or
 	// PreparationTime/TotalTime, never both kinds together for the same
 	// listing - see buildRecipeSortStages.
-	QuickestPrep  bool       `query:"quickest_prep,omitempty"`
-	QuickestTotal bool       `query:"quickest_total,omitempty"`
-	Ingredients   []string   `query:"ingredients,omitempty"`
-	Kind          RecipeKind `query:"kind,omitempty"`
+	QuickestPrep  bool `query:"quickest_prep,omitempty"`
+	QuickestTotal bool `query:"quickest_total,omitempty"`
+	// Popular requests the "Most Popular" sort: by favorite count descending
+	// (family-aggregate on the default listing, per-recipe on own_recipes/
+	// favorites_only - see popularityCountStages) instead of newest-first.
+	// Takes priority over QuickestPrep/QuickestTotal/PreparationTime/
+	// TotalTime when the site happens to send more than one of these (it
+	// normally sends at most one, being a single-select sort control).
+	Popular     bool       `query:"popular,omitempty"`
+	Ingredients []string   `query:"ingredients,omitempty"`
+	Kind        RecipeKind `query:"kind,omitempty"`
 	// Category, when "diy", lists only DIY recipes on the default/family-
 	// collapsed listing; when empty or "food", that listing excludes diy
 	// (see buildRecipeFilterPipeline - this is not a generic equality

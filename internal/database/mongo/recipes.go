@@ -225,8 +225,23 @@ func familyIngredientsAllStages(fieldPrefix string, patterns []interface{}) []bs
 	}
 }
 
+// isFamilyListingRequest reports whether parameters selects the default,
+// family-collapsed discovery listing (as opposed to variation_of/
+// own_recipes/favorites_only, which are flat). Shared between
+// buildRecipeFilterPipeline and its callers, which need to know whether the
+// pipeline still carries a "variations" array (see recipeCountStage) before
+// buildRecipeFilterPipeline's caller unsets it.
+func isFamilyListingRequest(parameters models.GetRecipesRequest) bool {
+	return parameters.VariationOf == "" && !parameters.OwnRecipes && !parameters.FavoritesOnly
+}
+
 // buildRecipeFilterPipeline returns the $lookup(author) plus every filter
 // stage for parameters, before any count/sort/skip/limit stage is appended.
+// On the family-collapsed listing (isFamilyListingRequest), the returned
+// pipeline still carries each surviving root's "variations" array - callers
+// must $unset it themselves before fetching items, but may use it first (via
+// recipeCountStage) to count every individual recipe folded into a family,
+// not just the family itself.
 func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 	var pipeline []bson.D
 
@@ -241,7 +256,7 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 		}
 	}
 
-	isFamilyListing := parameters.VariationOf == "" && !parameters.OwnRecipes && !parameters.FavoritesOnly
+	isFamilyListing := isFamilyListingRequest(parameters)
 
 	switch {
 	case parameters.VariationOf != "":
@@ -324,6 +339,13 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 				bson.A{"$_id"}, "$variations._id",
 			}}}}}},
 		}}})
+	}
+
+	if parameters.Popular {
+		// Only needed for the "Most Popular" sort (buildRecipeSortStages/
+		// favoritesSortStages) - skipped otherwise to avoid the extra $lookup
+		// on every listing.
+		pipeline = append(pipeline, popularityCountStages(isFamilyListing)...)
 	}
 
 	if parameters.SearchLocale != "" && (parameters.Title != "" || len(parameters.Ingredients) > 0) {
@@ -416,19 +438,43 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 		}
 	}
 
-	if isFamilyListing {
-		pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "variations"}})
-	}
+	// "variations" is left in place here (unlike every other lookup this
+	// function unsets right after use) - recipeCountStage still needs it to
+	// count every recipe folded into a family, not just the family. Callers
+	// must $unset it themselves once they're done counting, before fetching
+	// items.
 
 	return pipeline
 }
 
+// recipeCountStage returns the aggregation stage that reduces a filtered
+// pipeline down to a single {total: N} document (or no document at all if
+// nothing matched, same as $count). On the default family-collapsed listing,
+// a plain $count would only count surviving family-root documents - e.g. 48
+// families - even though those 48 cards fold in 5 more variations, i.e. 53
+// actual recipes; that undercounts whatever the caller reports as "N recipes
+// found". Summing 1 + size(variations) per root instead counts every
+// individual recipe. Must run against a pipeline that still carries
+// "variations" (i.e. before buildRecipeFilterPipeline's caller unsets it).
+func recipeCountStage(isFamilyListing bool) bson.D {
+	if !isFamilyListing {
+		return bson.D{{Key: "$count", Value: "total"}}
+	}
+	return bson.D{{Key: "$group", Value: bson.D{
+		{Key: "_id", Value: nil},
+		{Key: "total", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$add", Value: bson.A{
+			1, bson.D{{Key: "$size", Value: "$variations"}},
+		}}}}}},
+	}}}
+}
+
 // buildRecipeSortStages returns the sort stage(s) for parameters: the plain
 // newest-first sort; a sort by closeness to a target when a preparation/
-// total time target is given; or, for the "Quickest" preset (QuickestPrep/
-// QuickestTotal), a sort by the actual time ascending - ties broken
-// newest-first in every time-filtered case. On the default family-collapsed
-// listing, "newest" is family_sort_id (see
+// total time target is given; for the "Quickest" preset (QuickestPrep/
+// QuickestTotal), a sort by the actual time ascending; or, for "Most Popular"
+// (Popular), a sort by popularity_count (computed in buildRecipeFilterPipeline)
+// descending - ties broken newest-first in every one of these filtered cases.
+// On the default family-collapsed listing, "newest" is family_sort_id (see
 // buildRecipeFilterPipeline) rather than the root's own _id, so a fresh
 // variation promotes its whole family back to the top instead of sitting
 // buried under however old the root is.
@@ -440,6 +486,13 @@ func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 	sortKey := "_id"
 	if parameters.VariationOf == "" && !parameters.OwnRecipes {
 		sortKey = "family_sort_id"
+	}
+
+	if parameters.Popular {
+		return []bson.D{{{Key: "$sort", Value: bson.D{
+			{Key: "popularity_count", Value: -1},
+			{Key: sortKey, Value: -1},
+		}}}}
 	}
 
 	if stages, field, ok := quickestSortStage(parameters); ok {
@@ -499,6 +552,60 @@ func quickestSortStage(parameters models.GetRecipesRequest) (stages []bson.D, fi
 	}
 }
 
+// popularityCountStages computes popularity_count, the metric behind the
+// "Most Popular" sort (buildRecipeSortStages/favoritesSortStages), by
+// $lookup into the favorites collection. On the default family-collapsed
+// listing (isFamilyListing), it's the number of distinct people who
+// favorited the family - root or any variation, deduplicated the same way
+// recipe_service.decorateFamilyFavorite counts it for display - so sort
+// order matches what's shown. Every flat listing this actually reaches
+// through the filter UI (own_recipes, favorites_only) instead gets each
+// recipe's own individual count, matching decorateFavorite/List's own choice
+// there (decision #4). The internal variation_of listing (never exposed to
+// Popular by the site) also falls into this per-recipe branch; its displayed
+// count is family-aggregate instead, but since every result there already
+// shares one root/family, sorting by the family count would be a no-op tie
+// anyway.
+func popularityCountStages(isFamilyListing bool) []bson.D {
+	if isFamilyListing {
+		return []bson.D{
+			{{Key: "$addFields", Value: bson.D{
+				{Key: "family_ids", Value: bson.D{{Key: "$concatArrays", Value: bson.A{
+					bson.A{"$_id"}, "$variations._id",
+				}}}},
+			}}},
+			{{Key: "$lookup", Value: bson.D{
+				{Key: "from", Value: favoritesCollection},
+				{Key: "localField", Value: "family_ids"},
+				{Key: "foreignField", Value: "recipe"},
+				{Key: "as", Value: "family_favorites"},
+			}}},
+			{{Key: "$addFields", Value: bson.D{
+				{Key: "popularity_count", Value: bson.D{{Key: "$size", Value: bson.D{{Key: "$reduce", Value: bson.D{
+					{Key: "input", Value: "$family_favorites.users"},
+					{Key: "initialValue", Value: bson.A{}},
+					{Key: "in", Value: bson.D{{Key: "$setUnion", Value: bson.A{"$$value", "$$this"}}}},
+				}}}}}},
+			}}},
+			{{Key: "$unset", Value: bson.A{"family_ids", "family_favorites"}}},
+		}
+	}
+	return []bson.D{
+		{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: favoritesCollection},
+			{Key: "localField", Value: "_id"},
+			{Key: "foreignField", Value: "recipe"},
+			{Key: "as", Value: "own_favorites"},
+		}}},
+		{{Key: "$addFields", Value: bson.D{
+			{Key: "popularity_count", Value: bson.D{{Key: "$size", Value: bson.D{
+				{Key: "$ifNull", Value: bson.A{bson.D{{Key: "$first", Value: "$own_favorites.users"}}, bson.A{}}},
+			}}}},
+		}}},
+		{{Key: "$unset", Value: "own_favorites"}},
+	}
+}
+
 // timeDifferenceStages returns the $addFields stage(s) computing, per
 // candidate document, its absolute difference from parameters'
 // preparation/total time target(s) - shared by buildRecipeSortStages and
@@ -540,11 +647,19 @@ func timeDifferenceStages(parameters models.GetRecipesRequest) ([]bson.D, bson.A
 // favoritesSortStages sorts My Favorites alphabetically by title
 // (case-insensitive) by default - unlike every other listing, which defaults
 // to newest-first. A ready-in-time filter (a target, or the "Quickest"
-// preset) still takes priority (matching every other listing's behavior for
-// the same filter), with ties broken alphabetically instead of newest-first.
+// preset) or "Most Popular" still takes priority (matching every other
+// listing's behavior for the same filters), with ties broken alphabetically
+// instead of newest-first.
 func favoritesSortStages(parameters models.GetRecipesRequest) []bson.D {
 	addSortTitle := bson.D{{Key: "$addFields", Value: bson.D{{Key: "sort_title", Value: bson.D{{Key: "$toLower", Value: "$title"}}}}}}
 	unsetSortTitle := bson.D{{Key: "$unset", Value: "sort_title"}}
+
+	if parameters.Popular {
+		return []bson.D{addSortTitle, {{Key: "$sort", Value: bson.D{
+			{Key: "popularity_count", Value: -1},
+			{Key: "sort_title", Value: 1},
+		}}}, unsetSortTitle}
+	}
 
 	if stages, field, ok := quickestSortStage(parameters); ok {
 		stages = append(stages, addSortTitle, bson.D{{Key: "$sort", Value: bson.D{
@@ -572,9 +687,10 @@ func favoritesSortStages(parameters models.GetRecipesRequest) []bson.D {
 
 func (c *Client) GetRecipeDocuments(parameters models.GetRecipesRequest) ([]models.Recipe, int64, error) {
 	pipeline := buildRecipeFilterPipeline(parameters)
+	isFamilyListing := isFamilyListingRequest(parameters)
 
 	// Count total number of documents before sorting without limit and skip
-	cursor, err := c.db.Collection(recipesCollection).Aggregate(context.TODO(), append(slices.Clone(pipeline), bson.D{{Key: "$count", Value: "total"}}))
+	cursor, err := c.db.Collection(recipesCollection).Aggregate(context.TODO(), append(slices.Clone(pipeline), recipeCountStage(isFamilyListing)))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -590,6 +706,9 @@ func (c *Client) GetRecipeDocuments(parameters models.GetRecipesRequest) ([]mode
 		count = result.Total
 	}
 
+	if isFamilyListing {
+		pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "variations"}})
+	}
 	pipeline = append(pipeline, buildRecipeSortStages(parameters)...)
 
 	// Apply limit and offset for pagination
@@ -633,10 +752,11 @@ func (c *Client) GetRecipeDocumentsBoosted(ctx context.Context, userID string, p
 	}
 
 	base := buildRecipeFilterPipeline(parameters)
+	isFamilyListing := isFamilyListingRequest(parameters)
 	sortStages := buildRecipeSortStages(parameters)
 
 	countMatching := func(extra bson.D) (int64, error) {
-		pipeline := append(slices.Clone(base), extra, bson.D{{Key: "$count", Value: "total"}})
+		pipeline := append(slices.Clone(base), extra, recipeCountStage(isFamilyListing))
 		cursor, err := c.db.Collection(recipesCollection).Aggregate(ctx, pipeline)
 		if err != nil {
 			return 0, err
@@ -653,6 +773,9 @@ func (c *Client) GetRecipeDocumentsBoosted(ctx context.Context, userID string, p
 	}
 	fetchMatching := func(extra bson.D, skip, limit int) ([]models.Recipe, error) {
 		pipeline := append(slices.Clone(base), extra)
+		if isFamilyListing {
+			pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "variations"}})
+		}
 		pipeline = append(pipeline, sortStages...)
 		if skip > 0 {
 			pipeline = append(pipeline, bson.D{{Key: "$skip", Value: skip}})
