@@ -75,6 +75,7 @@ func (s *Service) translateLocale(canonical models.Recipe, locale string, force 
 		translated.SourceLocale = canonical.SourceLocale
 		translated.Locale = locale
 		translated.SourceHash = canonical.SourceHash
+		translated = s.applyTranslationOverrides(canonical, translated, locale)
 		if _, err := s.db.AddLocaleRecipe(translated, locale); err != nil {
 			lastErr = err
 			continue
@@ -99,4 +100,28 @@ func (s *Service) Retranslate(ctx context.Context, recipeID string) error {
 	}
 	s.scheduleTranslations(recipe)
 	return nil
+}
+
+// RetranslateLocale forces a fresh translation of one recipe into one locale
+// only, synchronously - unlike Retranslate (all configured locales,
+// fire-and-forget), this is meant for a caller that needs the result visible
+// immediately, e.g. ClearTranslationOverride reverting one pinned field back
+// to machine translation on demand.
+func (s *Service) RetranslateLocale(ctx context.Context, recipeID, locale string) error {
+	if _, err := primitive.ObjectIDFromHex(recipeID); err != nil {
+		return ErrNotFound
+	}
+	if !s.canTranslate() {
+		return nil
+	}
+	canonical, err := s.db.GetRecipeById(recipeID)
+	if err != nil {
+		if errors.Is(err, mongorepo.NotFoundError) {
+			return ErrNotFound
+		}
+		return err
+	}
+	s.translateSlots <- struct{}{}
+	defer func() { <-s.translateSlots }()
+	return s.translateLocale(canonical, locale, true)
 }

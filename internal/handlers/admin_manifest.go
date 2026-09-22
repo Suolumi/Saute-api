@@ -123,4 +123,44 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		Label: "Run image cleanup", Description: "Delete unreferenced picture files older than 24h, right now.",
 		Params: []models.AdminRouteParam{},
 	},
+	{
+		ID: "admin.translations.listSuggestions", Method: "GET", Path: "/admin/translation-suggestions", Category: "translations",
+		Label: "List translation suggestions", Description: "Browse user-submitted translation fixes awaiting review.",
+		Params: []models.AdminRouteParam{
+			{Name: "status", In: "query", Type: "string", Label: "Status"},
+			{Name: "limit", In: "query", Type: "int", Label: "Limit"},
+			{Name: "offset", In: "query", Type: "int", Label: "Offset"},
+		},
+	},
+	{
+		ID: "admin.translations.approve", Method: "POST", Path: "/admin/translation-suggestions/:id/approve", Category: "translations",
+		Label: "Approve translation suggestion", Description: "Apply a submitted fix to the live translation and pin it as a durable override.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
+		},
+	},
+	{
+		ID: "admin.translations.reject", Method: "POST", Path: "/admin/translation-suggestions/:id/reject", Category: "translations",
+		Label: "Reject translation suggestion", Description: "Dismiss a submitted fix with no effect.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
+		},
+	},
+	{
+		ID: "admin.translations.listOverrides", Method: "GET", Path: "/admin/translation-overrides", Category: "translations",
+		Label: "List durable translation overrides", Description: "See which fields of a recipe's translation are pinned by an approved fix.",
+		Params: []models.AdminRouteParam{
+			{Name: "recipe_id", In: "query", Type: "string", Picker: "recipe", Required: true, Label: "Recipe"},
+			{Name: "locale", In: "query", Type: "string", Label: "Locale"},
+		},
+	},
+	{
+		ID: "admin.translations.clearOverride", Method: "DELETE", Path: "/admin/translation-overrides/:id", Category: "translations",
+		Label: "Clear translation override", Description: "Revert one pinned field back to machine translation immediately.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Override ID"},
+		},
+	},
 }

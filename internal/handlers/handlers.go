@@ -220,6 +220,11 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.DELETE("/recipes/:id/variation-of", h.AdminDetachRecipeVariation, authLimiter)
 	adminRouter.GET("/system/stats", h.AdminStats)
 	adminRouter.POST("/system/cleanup-images", h.AdminCleanupImages, authLimiter)
+	adminRouter.GET("/translation-suggestions", h.AdminListTranslationSuggestions)
+	adminRouter.POST("/translation-suggestions/:id/approve", h.AdminApproveTranslationSuggestion, authLimiter)
+	adminRouter.POST("/translation-suggestions/:id/reject", h.AdminRejectTranslationSuggestion, authLimiter)
+	adminRouter.GET("/translation-overrides", h.AdminListTranslationOverrides)
+	adminRouter.DELETE("/translation-overrides/:id", h.AdminClearTranslationOverride, authLimiter)
 
 	// Recipes routes
 	unprotectedRouter.GET("/recipes", h.GetRecipes)
@@ -233,6 +238,7 @@ func (h *Handlers) RegisterEndpoints() {
 	protectedRouter.DELETE("/recipes/:id/favorite", h.UnfavoriteRecipe)
 	protectedRouter.POST("/recipes/:id/pictures", h.AddRecipePicture, h.RecipeLoaderMiddleware, middleware.BodyLimit("10M"))
 	protectedRouter.DELETE("/recipes/:id/pictures/:filename", h.RemoveRecipePicture, h.RecipeLoaderMiddleware)
+	protectedRouter.POST("/recipes/:id/translation-suggestions", h.SubmitTranslationSuggestion, authLimiter)
 
 	// Recipes images
 	unprotectedRouter.Static("/recipe-pictures", h.cfg.RecipeImageDir)

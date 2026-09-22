@@ -46,6 +46,9 @@ type fakeStore struct {
 	familyReferencesRecipeFn    func(familyRootID, targetID string) (bool, error)
 	getRecipeTitlesFn           func(ids []string) (map[string]string, error)
 	getUsersByIDsFn             func(ids []string) (map[string]models.UserView, error)
+	listTranslationOverridesFn  func(recipeID, locale string) ([]models.TranslationOverride, error)
+	deleteTranslationOverrideFn func(id string) (models.TranslationOverride, error)
+	deleteOverridesByPrefixFn   func(recipeID, locale, prefix string) error
 	// callOrder records, in order, the names of RepointVariations/
 	// PromoteRecipeToRoot/DeleteRecipeById calls - used to assert promotion
 	// happens strictly before the delete.
@@ -198,6 +201,43 @@ func (f *fakeStore) GetFamilyFavoriteInfo(_ context.Context, rootIDs []string, u
 		return f.getFamilyFavoriteInfoFn(rootIDs, userID)
 	}
 	return map[string]models.FavoriteInfo{}, nil
+}
+
+func (f *fakeStore) CreateTranslationSuggestion(context.Context, models.TranslationSuggestion) (models.TranslationSuggestion, error) {
+	return models.TranslationSuggestion{}, nil
+}
+func (f *fakeStore) GetTranslationSuggestionById(context.Context, string) (models.TranslationSuggestion, error) {
+	return models.TranslationSuggestion{}, nil
+}
+func (f *fakeStore) ListTranslationSuggestions(context.Context, string, int64, int64) ([]models.TranslationSuggestion, int64, error) {
+	return nil, 0, nil
+}
+func (f *fakeStore) UpdateTranslationSuggestionStatus(context.Context, string, string, string) error {
+	return nil
+}
+func (f *fakeStore) HasPendingTranslationSuggestion(context.Context, string, string, string) (bool, error) {
+	return false, nil
+}
+func (f *fakeStore) UpsertTranslationOverride(context.Context, models.TranslationOverride) error {
+	return nil
+}
+func (f *fakeStore) ListTranslationOverrides(_ context.Context, recipeID, locale string) ([]models.TranslationOverride, error) {
+	if f.listTranslationOverridesFn != nil {
+		return f.listTranslationOverridesFn(recipeID, locale)
+	}
+	return nil, nil
+}
+func (f *fakeStore) DeleteTranslationOverride(_ context.Context, id string) (models.TranslationOverride, error) {
+	if f.deleteTranslationOverrideFn != nil {
+		return f.deleteTranslationOverrideFn(id)
+	}
+	return models.TranslationOverride{}, nil
+}
+func (f *fakeStore) DeleteTranslationOverridesByFieldPrefix(_ context.Context, recipeID, locale, prefix string) error {
+	if f.deleteOverridesByPrefixFn != nil {
+		return f.deleteOverridesByPrefixFn(recipeID, locale, prefix)
+	}
+	return nil
 }
 
 type fakeTranslator struct {
@@ -365,6 +405,143 @@ func TestTranslateLocaleSkipsFreshRowWhenNotForced(t *testing.T) {
 	}
 	if translated {
 		t.Fatal("translator was called for an already-fresh row")
+	}
+}
+
+func TestApplyTranslationOverridesReappliesSurvivingOverride(t *testing.T) {
+	canonical := canonicalRecipe() // Title: "Pancakes"
+	overrideID := primitive.NewObjectID()
+	var deleted []string
+	store := &fakeStore{
+		listTranslationOverridesFn: func(recipeID, locale string) ([]models.TranslationOverride, error) {
+			return []models.TranslationOverride{{
+				Id: &overrideID, RecipeID: *canonical.Id, Locale: locale,
+				FieldPath: "title", Value: "Crêpes (corrigé)", SourceSnapshot: "Pancakes",
+			}}, nil
+		},
+		deleteTranslationOverrideFn: func(id string) (models.TranslationOverride, error) {
+			deleted = append(deleted, id)
+			return models.TranslationOverride{}, nil
+		},
+	}
+	s := &Service{db: store}
+
+	got := s.applyTranslationOverrides(canonical, models.Recipe{Title: "Crêpes (frais)"}, "fr")
+	if got.Title != "Crêpes (corrigé)" {
+		t.Fatalf("Title = %q, want the reapplied override value", got.Title)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("override was deleted, want it kept: %v", deleted)
+	}
+}
+
+func TestApplyTranslationOverridesDropsDriftedOverride(t *testing.T) {
+	canonical := canonicalRecipe() // Title now "Pancakes", but override was approved against "Crepes"
+	overrideID := primitive.NewObjectID()
+	var deleted []string
+	store := &fakeStore{
+		listTranslationOverridesFn: func(recipeID, locale string) ([]models.TranslationOverride, error) {
+			return []models.TranslationOverride{{
+				Id: &overrideID, RecipeID: *canonical.Id, Locale: locale,
+				FieldPath: "title", Value: "Crêpes (corrigé)", SourceSnapshot: "Crepes",
+			}}, nil
+		},
+		deleteTranslationOverrideFn: func(id string) (models.TranslationOverride, error) {
+			deleted = append(deleted, id)
+			return models.TranslationOverride{}, nil
+		},
+	}
+	s := &Service{db: store}
+
+	got := s.applyTranslationOverrides(canonical, models.Recipe{Title: "Crêpes (frais)"}, "fr")
+	if got.Title != "Crêpes (frais)" {
+		t.Fatalf("Title = %q, want the fresh machine translation left untouched", got.Title)
+	}
+	if len(deleted) != 1 || deleted[0] != overrideID.Hex() {
+		t.Fatalf("deleted = %v, want exactly the drifted override %q", deleted, overrideID.Hex())
+	}
+}
+
+func TestApplyTranslationOverridesDropsAllOnIngredientCountChange(t *testing.T) {
+	canonical := canonicalRecipe()
+	canonical.Ingredients = []models.Ingredient{{Name: "Flour"}, {Name: "Egg"}, {Name: "Milk"}} // now 3
+	titleOverrideID := primitive.NewObjectID()
+	ingredientOverrideID := primitive.NewObjectID()
+	approvedLen := 2 // overrides were approved when there were only 2 ingredients
+	var deletedPrefixes []string
+	var deletedIDs []string
+	store := &fakeStore{
+		listTranslationOverridesFn: func(recipeID, locale string) ([]models.TranslationOverride, error) {
+			return []models.TranslationOverride{
+				{Id: &titleOverrideID, RecipeID: *canonical.Id, Locale: locale, FieldPath: "title", Value: "Crêpes (corrigé)", SourceSnapshot: "Pancakes"},
+				{Id: &ingredientOverrideID, RecipeID: *canonical.Id, Locale: locale, FieldPath: "ingredients.1.name", Value: "Œuf", SourceSnapshot: "Egg", IngredientsLen: &approvedLen},
+			}, nil
+		},
+		deleteOverridesByPrefixFn: func(recipeID, locale, prefix string) error {
+			deletedPrefixes = append(deletedPrefixes, prefix)
+			return nil
+		},
+		deleteTranslationOverrideFn: func(id string) (models.TranslationOverride, error) {
+			deletedIDs = append(deletedIDs, id)
+			return models.TranslationOverride{}, nil
+		},
+	}
+	s := &Service{db: store}
+
+	translated := models.Recipe{Title: "Crêpes (frais)", Ingredients: []models.Ingredient{{Name: "Farine"}, {Name: "Oeuf (frais)"}, {Name: "Lait"}}}
+	got := s.applyTranslationOverrides(canonical, translated, "fr")
+
+	if got.Title != "Crêpes (corrigé)" {
+		t.Fatalf("Title = %q, want the surviving title override reapplied", got.Title)
+	}
+	if got.Ingredients[1].Name != "Oeuf (frais)" {
+		t.Fatalf("Ingredients[1].Name = %q, want the fresh machine translation (ingredient override dropped)", got.Ingredients[1].Name)
+	}
+	if len(deletedPrefixes) != 1 || deletedPrefixes[0] != "ingredients." {
+		t.Fatalf("deletedPrefixes = %v, want exactly [ingredients.]", deletedPrefixes)
+	}
+	if len(deletedIDs) != 0 {
+		t.Fatalf("individual deletes = %v, want none (the prefix delete already covers it)", deletedIDs)
+	}
+}
+
+func TestApplyTranslationOverridesStepOnlyChangeLeavesIngredientOverridesAlone(t *testing.T) {
+	canonical := canonicalRecipe()
+	canonical.Ingredients = []models.Ingredient{{Name: "Flour"}}
+	canonical.Steps = []models.Step{{Description: "Mix"}, {Description: "Bake"}, {Description: "Serve"}} // now 3
+	ingredientOverrideID := primitive.NewObjectID()
+	stepOverrideID := primitive.NewObjectID()
+	ingredientsApprovedLen := 1
+	stepsApprovedLen := 2 // overrides were approved when there were only 2 steps
+	var deletedPrefixes []string
+	store := &fakeStore{
+		listTranslationOverridesFn: func(recipeID, locale string) ([]models.TranslationOverride, error) {
+			return []models.TranslationOverride{
+				{Id: &ingredientOverrideID, RecipeID: *canonical.Id, Locale: locale, FieldPath: "ingredients.0.name", Value: "Farine (corrigé)", SourceSnapshot: "Flour", IngredientsLen: &ingredientsApprovedLen},
+				{Id: &stepOverrideID, RecipeID: *canonical.Id, Locale: locale, FieldPath: "steps.0.description", Value: "Mélanger (corrigé)", SourceSnapshot: "Mix", StepsLen: &stepsApprovedLen},
+			}, nil
+		},
+		deleteOverridesByPrefixFn: func(recipeID, locale, prefix string) error {
+			deletedPrefixes = append(deletedPrefixes, prefix)
+			return nil
+		},
+	}
+	s := &Service{db: store}
+
+	translated := models.Recipe{
+		Ingredients: []models.Ingredient{{Name: "Farine (frais)"}},
+		Steps:       []models.Step{{Description: "Mélanger (frais)"}, {Description: "Cuire"}, {Description: "Servir"}},
+	}
+	got := s.applyTranslationOverrides(canonical, translated, "fr")
+
+	if got.Ingredients[0].Name != "Farine (corrigé)" {
+		t.Fatalf("Ingredients[0].Name = %q, want the surviving ingredient override reapplied", got.Ingredients[0].Name)
+	}
+	if got.Steps[0].Description != "Mélanger (frais)" {
+		t.Fatalf("Steps[0].Description = %q, want the fresh machine translation (step override dropped)", got.Steps[0].Description)
+	}
+	if len(deletedPrefixes) != 1 || deletedPrefixes[0] != "steps." {
+		t.Fatalf("deletedPrefixes = %v, want exactly [steps.]", deletedPrefixes)
 	}
 }
 

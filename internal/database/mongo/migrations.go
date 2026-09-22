@@ -36,5 +36,16 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("create favorite indexes: %w", err)
 	}
+	if _, err := c.db.Collection(translationSuggestionsCollection).Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "created_at", Value: -1}}, Options: options.Index().SetName("recipe_translation_suggestions_status_created")},
+		{Keys: bson.D{{Key: "recipe_id", Value: 1}, {Key: "locale", Value: 1}, {Key: "submitted_by", Value: 1}, {Key: "status", Value: 1}}, Options: options.Index().SetName("recipe_translation_suggestions_pending_lookup")},
+	}); err != nil {
+		return fmt.Errorf("create translation suggestion indexes: %w", err)
+	}
+	if _, err := c.db.Collection(translationOverridesCollection).Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "recipe_id", Value: 1}, {Key: "locale", Value: 1}, {Key: "field_path", Value: 1}}, Options: options.Index().SetUnique(true).SetName("recipe_translation_overrides_recipe_locale_field_unique")},
+	}); err != nil {
+		return fmt.Errorf("create translation override indexes: %w", err)
+	}
 	return nil
 }

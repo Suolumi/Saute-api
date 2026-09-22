@@ -54,6 +54,14 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusConflict, "Linking would create a recipe that references its own family", nil, c)
 	case errors.Is(err, recipe_service.ErrNotVariation):
 		return errorResponse(http.StatusUnprocessableEntity, "Recipe is not a variation", nil, c)
+	case errors.Is(err, recipe_service.ErrSuggestionNotFound):
+		return errorResponse(http.StatusNotFound, "Translation suggestion not found", nil, c)
+	case errors.Is(err, recipe_service.ErrSuggestionAlreadyPending):
+		return errorResponse(http.StatusConflict, "A suggestion for this recipe and locale is already pending", nil, c)
+	case errors.Is(err, recipe_service.ErrSuggestionStale):
+		return errorResponse(http.StatusConflict, "Recipe has changed since this suggestion was submitted", nil, c)
+	case errors.Is(err, recipe_service.ErrOverrideNotFound):
+		return errorResponse(http.StatusNotFound, "Translation override not found", nil, c)
 	default:
 		return errorResponse(http.StatusInternalServerError, "Could not process recipe", err, c)
 	}
@@ -359,6 +367,22 @@ func (h *Handlers) RetranslateRecipe(c echo.Context) error {
 		return recipeServiceError(err, c)
 	}
 	return messageResponse(http.StatusAccepted, "Retranslation scheduled", c)
+}
+
+// SubmitTranslationSuggestion lets any authenticated user propose a fix to
+// one locale's machine translation of a recipe - see recipe_service.
+// SubmitTranslationSuggestion for the validation rules.
+func (h *Handlers) SubmitTranslationSuggestion(c echo.Context) error {
+	var body models.SubmitTranslationSuggestionRequest
+	if err := c.Bind(&body); err != nil {
+		return errorResponse(http.StatusBadRequest, err.Error(), nil, c)
+	}
+	jwt := jwt_manager.GetJwt[*models.TokenClaims](c)
+	suggestion, err := h.recipes.SubmitTranslationSuggestion(c.Request().Context(), c.Param("id"), jwt.UserId, body)
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusCreated, suggestion)
 }
 
 func (h *Handlers) RecipeAuthorMiddleware(next echo.HandlerFunc) echo.HandlerFunc {

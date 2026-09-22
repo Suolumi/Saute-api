@@ -56,5 +56,16 @@ type Database interface {
 	GetFavoriteInfo(ctx context.Context, ids []string, userID string) (map[string]models.FavoriteInfo, error)
 	GetFamilyFavoriteInfo(ctx context.Context, rootIDs []string, userID string) (map[string]models.FavoriteInfo, error)
 
+	CreateTranslationSuggestion(ctx context.Context, suggestion models.TranslationSuggestion) (models.TranslationSuggestion, error)
+	GetTranslationSuggestionById(ctx context.Context, id string) (models.TranslationSuggestion, error)
+	ListTranslationSuggestions(ctx context.Context, status string, limit, offset int64) ([]models.TranslationSuggestion, int64, error)
+	UpdateTranslationSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
+	HasPendingTranslationSuggestion(ctx context.Context, recipeID, locale, userID string) (bool, error)
+
+	UpsertTranslationOverride(ctx context.Context, override models.TranslationOverride) error
+	ListTranslationOverrides(ctx context.Context, recipeID, locale string) ([]models.TranslationOverride, error)
+	DeleteTranslationOverride(ctx context.Context, id string) (models.TranslationOverride, error)
+	DeleteTranslationOverridesByFieldPrefix(ctx context.Context, recipeID, locale, prefix string) error
+
 	RawDatabase() *mongodriver.Database
 }

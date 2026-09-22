@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -241,4 +242,78 @@ func (h *Handlers) AdminCleanupImages(c echo.Context) error {
 // console - see admin_manifest.go.
 func (h *Handlers) AdminRoutesManifest(c echo.Context) error {
 	return c.JSON(http.StatusOK, adminRouteManifest)
+}
+
+// AdminListTranslationSuggestions lists user-submitted translation fixes for
+// review, defaulting to pending ones.
+func (h *Handlers) AdminListTranslationSuggestions(c echo.Context) error {
+	status := c.QueryParam("status")
+	if status == "" {
+		status = models.TranslationSuggestionPending
+	}
+	limit := int64(20)
+	if v := c.QueryParam("limit"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || parsed < 0 || parsed > 100 {
+			return errorResponse(http.StatusBadRequest, "limit must be between 0 and 100", nil, c)
+		}
+		limit = parsed
+	}
+	var offset int64
+	if v := c.QueryParam("offset"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || parsed < 0 {
+			return errorResponse(http.StatusBadRequest, "offset must not be negative", nil, c)
+		}
+		offset = parsed
+	}
+	result, err := h.recipes.ListTranslationSuggestionsForAdmin(c.Request().Context(), status, limit, offset)
+	if err != nil {
+		return errorResponse(http.StatusInternalServerError, "Could not list translation suggestions", err, c)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// AdminApproveTranslationSuggestion applies a submitted fix to the live
+// translation and pins the fields it actually changed as durable overrides.
+func (h *Handlers) AdminApproveTranslationSuggestion(c echo.Context) error {
+	jwt := jwt_manager.GetJwt[*models.TokenClaims](c)
+	suggestion, err := h.recipes.ApproveTranslationSuggestion(c.Request().Context(), c.Param("id"), jwt.UserId)
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusOK, suggestion)
+}
+
+// AdminRejectTranslationSuggestion dismisses a submitted fix with no effect.
+func (h *Handlers) AdminRejectTranslationSuggestion(c echo.Context) error {
+	jwt := jwt_manager.GetJwt[*models.TokenClaims](c)
+	suggestion, err := h.recipes.RejectTranslationSuggestion(c.Request().Context(), c.Param("id"), jwt.UserId)
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusOK, suggestion)
+}
+
+// AdminListTranslationOverrides lists which fields of a recipe's translation
+// are currently pinned by an approved fix.
+func (h *Handlers) AdminListTranslationOverrides(c echo.Context) error {
+	recipeID := c.QueryParam("recipe_id")
+	if recipeID == "" {
+		return errorResponse(http.StatusBadRequest, "recipe_id is required", nil, c)
+	}
+	result, err := h.recipes.ListTranslationOverridesForAdmin(c.Request().Context(), recipeID, c.QueryParam("locale"))
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// AdminClearTranslationOverride reverts one pinned field back to machine
+// translation immediately (re-translating that one locale synchronously).
+func (h *Handlers) AdminClearTranslationOverride(c echo.Context) error {
+	if err := h.recipes.ClearTranslationOverride(c.Request().Context(), c.Param("id")); err != nil {
+		return recipeServiceError(err, c)
+	}
+	return messageResponse(http.StatusOK, "Translation override cleared", c)
 }

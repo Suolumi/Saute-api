@@ -73,6 +73,20 @@ var (
 	// ErrNotVariation is DetachVariation's guard: only an actual variation
 	// (VariationOf != nil) can be detached back to standalone.
 	ErrNotVariation = errors.New("recipe is not a variation")
+	// ErrSuggestionNotFound is SubmitTranslationSuggestion's/
+	// ApproveTranslationSuggestion's/RejectTranslationSuggestion's guard
+	// against an unknown suggestion id.
+	ErrSuggestionNotFound = errors.New("translation suggestion not found")
+	// ErrSuggestionAlreadyPending is SubmitTranslationSuggestion's guard
+	// against a second pending suggestion for the same recipe/locale/user.
+	ErrSuggestionAlreadyPending = errors.New("a suggestion for this recipe and locale is already pending")
+	// ErrSuggestionStale is ApproveTranslationSuggestion's guard: the
+	// canonical recipe changed (or was deleted) since the suggestion was
+	// submitted, so there is nothing left to safely approve.
+	ErrSuggestionStale = errors.New("recipe has changed since this suggestion was submitted")
+	// ErrOverrideNotFound is ClearTranslationOverride's guard against an
+	// unknown override id.
+	ErrOverrideNotFound = errors.New("translation override not found")
 )
 
 // defaultCategory normalizes a possibly-legacy empty Category to Food,
@@ -122,6 +136,17 @@ type Store interface {
 	DeleteFavoritesByRecipeID(ctx context.Context, recipeID string) error
 	GetFavoriteInfo(ctx context.Context, ids []string, userID string) (map[string]models.FavoriteInfo, error)
 	GetFamilyFavoriteInfo(ctx context.Context, rootIDs []string, userID string) (map[string]models.FavoriteInfo, error)
+
+	CreateTranslationSuggestion(ctx context.Context, suggestion models.TranslationSuggestion) (models.TranslationSuggestion, error)
+	GetTranslationSuggestionById(ctx context.Context, id string) (models.TranslationSuggestion, error)
+	ListTranslationSuggestions(ctx context.Context, status string, limit, offset int64) ([]models.TranslationSuggestion, int64, error)
+	UpdateTranslationSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
+	HasPendingTranslationSuggestion(ctx context.Context, recipeID, locale, userID string) (bool, error)
+
+	UpsertTranslationOverride(ctx context.Context, override models.TranslationOverride) error
+	ListTranslationOverrides(ctx context.Context, recipeID, locale string) ([]models.TranslationOverride, error)
+	DeleteTranslationOverride(ctx context.Context, id string) (models.TranslationOverride, error)
+	DeleteTranslationOverridesByFieldPrefix(ctx context.Context, recipeID, locale, prefix string) error
 }
 
 // Translator is the slice of *translator.Translator the service needs. A nil
