@@ -848,10 +848,12 @@ func (s *Service) Get(ctx context.Context, recipeID, locale, userID string) (mod
 		return models.Recipe{}, err
 	}
 	localized := s.localize(recipe, locale)
-	// A detail page always represents one family, whichever member is being
-	// viewed, so favorites are always decorated family-wide here (unlike
-	// List, which has an "own recipes" per-recipe mode - see List).
-	s.decorateFamilyFavorite(ctx, &localized, userID)
+	// A detail page shows the exact recipe being viewed, so its favorite
+	// status/count reflect only that recipe, not the whole family (unlike
+	// the family-collapsed discovery listing, which still aggregates by
+	// family - see List) - a user favoriting one variation shouldn't make
+	// every other member of the family look favorited when viewed directly.
+	s.decorateFavorite(ctx, &localized, userID)
 	s.decorateVariationCount(ctx, &localized)
 	s.decorateRefTitle(ctx, &localized)
 	s.decoratePictureContributors(ctx, &localized)
@@ -940,28 +942,13 @@ func familyRootHex(id, variationOf *primitive.ObjectID) string {
 	return ""
 }
 
-// decorateFamilyFavorite is decorateFavorite, but counting distinct people
-// who favorited any member of recipe's family (root or any variation), not
-// just recipe itself - see decision #6. Used everywhere except "My Recipes"
-// (List with OwnRecipes set), which wants each recipe's own individual count.
-func (s *Service) decorateFamilyFavorite(ctx context.Context, recipe *models.Recipe, userID string) {
-	rootHex := familyRootHex(recipe.Id, recipe.VariationOf)
-	if rootHex == "" {
-		return
-	}
-	info, err := s.db.GetFamilyFavoriteInfo(ctx, []string{rootHex}, userID)
-	if err != nil {
-		utils.LogError("could not load family favorite info", err)
-		return
-	}
-	if fav, ok := info[rootHex]; ok {
-		recipe.Favorite = fav.Favorited
-		recipe.FavoriteCount = fav.Count
-	}
-}
-
-// decorateFamilyFavoritePreviews is decorateFamilyFavorite for a page of
-// previews, fetched in one batched lookup keyed by family root.
+// decorateFamilyFavoritePreviews stamps Favorite/FavoriteCount onto a page of
+// previews, counting distinct people who favorited any member of each
+// preview's family (root or any variation), not just the preview itself -
+// see decision #6. Used only by the family-collapsed discovery listing
+// (List's default mode); every other listing mode, and single-recipe fetches
+// (Get), show each recipe's own exact favorite status instead - see
+// decorateFavoritePreviews/decorateFavorite.
 func (s *Service) decorateFamilyFavoritePreviews(ctx context.Context, previews []models.RecipePreview, userID string) {
 	rootHexes := make([]string, 0, len(previews))
 	seen := make(map[string]struct{}, len(previews))
@@ -1198,9 +1185,12 @@ func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest,
 	}
 
 	previews := s.localizePreviews(ctx, documents, parameters.Locale)
-	if parameters.OwnRecipes || parameters.FavoritesOnly {
-		// "My Recipes"/"My Favorites": each entry's own individual favorite
-		// count, not the family aggregate (decision #4).
+	if parameters.OwnRecipes || parameters.FavoritesOnly || parameters.VariationOf != "" {
+		// "My Recipes"/"My Favorites" (decision #4) and a family's variation
+		// list (VariationOf - used by the recipe detail page's Variations
+		// section and the variation-picker modal): each entry's own exact
+		// favorite status, not the family aggregate - only the
+		// family-collapsed discovery listing still aggregates by family.
 		s.decorateFavoritePreviews(ctx, previews, userID)
 	} else {
 		s.decorateFamilyFavoritePreviews(ctx, previews, userID)

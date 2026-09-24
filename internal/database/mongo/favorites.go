@@ -149,6 +149,71 @@ func (c *Client) favoritedRecipeIDs(ctx context.Context, userID string) ([]primi
 	return ids, nil
 }
 
+// GetRecipeFavoriters returns a page of the users who favorited a recipe -
+// the admin back-office's reverse lookup of AddFavorite/RemoveFavorite's
+// users array - sorted alphabetically by username since favorites carry no
+// per-user timestamp, plus the total number of favoriters (for pagination,
+// not just the page's length). A recipe that was never favorited (no
+// FavoriteDB document) simply yields an empty page and a total of 0.
+func (c *Client) GetRecipeFavoriters(ctx context.Context, recipeID string, limit, offset int64) ([]models.UserView, int64, error) {
+	recipeObjectID, err := primitive.ObjectIDFromHex(recipeID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	cursor, err := c.db.Collection(favoritesCollection).Aggregate(ctx, bson.A{
+		bson.D{{Key: "$match", Value: bson.D{{Key: "recipe", Value: recipeObjectID}}}},
+		bson.D{{Key: "$unwind", Value: "$users"}},
+		bson.D{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: userCollection},
+			{Key: "localField", Value: "users"},
+			{Key: "foreignField", Value: "_id"},
+			{Key: "as", Value: "user"},
+		}}},
+		bson.D{{Key: "$unwind", Value: "$user"}},
+		bson.D{{Key: "$replaceRoot", Value: bson.D{{Key: "newRoot", Value: "$user"}}}},
+		bson.D{{Key: "$project", Value: bson.D{
+			{Key: "_id", Value: 1},
+			{Key: "username", Value: 1},
+			{Key: "picture", Value: 1},
+		}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "username", Value: 1}}}},
+		bson.D{{Key: "$facet", Value: bson.D{
+			{Key: "data", Value: bson.A{
+				bson.D{{Key: "$skip", Value: offset}},
+				bson.D{{Key: "$limit", Value: limit}},
+			}},
+			{Key: "total", Value: bson.A{
+				bson.D{{Key: "$count", Value: "count"}},
+			}},
+		}}},
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	var facets []struct {
+		Data  []models.UserView `bson:"data"`
+		Total []struct {
+			Count int64 `bson:"count"`
+		} `bson:"total"`
+	}
+	if err := cursor.All(ctx, &facets); err != nil {
+		return nil, 0, err
+	}
+	if len(facets) == 0 {
+		return []models.UserView{}, 0, nil
+	}
+	users := facets[0].Data
+	if users == nil {
+		users = []models.UserView{}
+	}
+	var total int64
+	if len(facets[0].Total) > 0 {
+		total = facets[0].Total[0].Count
+	}
+	return users, total, nil
+}
+
 // GetFamilyFavoriteInfo is the family-aware counterpart to GetFavoriteInfo:
 // for each given root id, it returns the number of distinct people who
 // favorited that root or any of its variations (not a raw sum - the same

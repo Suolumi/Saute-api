@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"recipes/internal/config"
 	mongorepo "recipes/internal/database/mongo"
@@ -184,6 +185,40 @@ func (h *Handlers) AdminListRecipes(c echo.Context) error {
 		recipes = []models.RecipePreview{}
 	}
 	return c.JSON(http.StatusOK, models.GetRecipesResponse{Length: count, Items: recipes})
+}
+
+// AdminGetRecipeFavorites lists the users who favorited a recipe - the
+// reverse lookup of the self-service favorite/favorites_only surface
+// (recipes.go) - paginated and sorted alphabetically by username, for
+// moderation visibility.
+func (h *Handlers) AdminGetRecipeFavorites(c echo.Context) error {
+	recipeID := c.Param("id")
+	if _, err := primitive.ObjectIDFromHex(recipeID); err != nil {
+		return errorResponse(http.StatusNotFound, "Recipe not found", err, c)
+	}
+
+	limit := int64(20)
+	if v := c.QueryParam("limit"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || parsed < 0 || parsed > 100 {
+			return errorResponse(http.StatusBadRequest, "limit must be between 0 and 100", nil, c)
+		}
+		limit = parsed
+	}
+	var offset int64
+	if v := c.QueryParam("offset"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || parsed < 0 {
+			return errorResponse(http.StatusBadRequest, "offset must not be negative", nil, c)
+		}
+		offset = parsed
+	}
+
+	users, total, err := h.db.GetRecipeFavoriters(c.Request().Context(), recipeID, limit, offset)
+	if err != nil {
+		return errorResponse(http.StatusInternalServerError, "Could not get recipe favorites", err, c)
+	}
+	return c.JSON(http.StatusOK, models.GetUsersResponse{Length: total, Items: users})
 }
 
 // AdminDetachRecipeVariation removes a recipe from its family, turning it

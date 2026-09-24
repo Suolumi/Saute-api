@@ -549,11 +549,15 @@ func TestGetDecoratesFavorite(t *testing.T) {
 	canonical := canonicalRecipe()
 	store := &fakeStore{
 		getRecipeByIdFn: func(string) (models.Recipe, error) { return canonical, nil },
-		getFamilyFavoriteInfoFn: func(rootIDs []string, userID string) (map[string]models.FavoriteInfo, error) {
-			if len(rootIDs) != 1 || rootIDs[0] != canonical.Id.Hex() || userID != "user-1" {
-				t.Fatalf("GetFamilyFavoriteInfo called with rootIDs=%v userID=%q", rootIDs, userID)
+		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
+			if len(ids) != 1 || ids[0] != canonical.Id.Hex() || userID != "user-1" {
+				t.Fatalf("GetFavoriteInfo called with ids=%v userID=%q", ids, userID)
 			}
 			return map[string]models.FavoriteInfo{canonical.Id.Hex(): {Count: 3, Favorited: true}}, nil
+		},
+		getFamilyFavoriteInfoFn: func([]string, string) (map[string]models.FavoriteInfo, error) {
+			t.Fatal("GetFamilyFavoriteInfo should not be called by Get - a detail page shows the exact recipe's own favorite status, not the family's")
+			return nil, nil
 		},
 	}
 	s := &Service{db: store}
@@ -570,8 +574,8 @@ func TestGetDecoratesFavorite(t *testing.T) {
 func TestGetLeavesFavoriteZeroValueOnLookupError(t *testing.T) {
 	canonical := canonicalRecipe()
 	store := &fakeStore{
-		getRecipeByIdFn:         func(string) (models.Recipe, error) { return canonical, nil },
-		getFamilyFavoriteInfoFn: func([]string, string) (map[string]models.FavoriteInfo, error) { return nil, errors.New("boom") },
+		getRecipeByIdFn:   func(string) (models.Recipe, error) { return canonical, nil },
+		getFavoriteInfoFn: func([]string, string) (map[string]models.FavoriteInfo, error) { return nil, errors.New("boom") },
 	}
 	s := &Service{db: store}
 
@@ -1814,6 +1818,31 @@ func TestListUsesPerRecipeFavoritesForOwnRecipes(t *testing.T) {
 	s := &Service{db: store}
 
 	previews, _, err := s.List(context.Background(), models.GetRecipesRequest{OwnRecipes: true}, "user-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(previews) != 1 || !previews[0].Favorite || previews[0].FavoriteCount != 1 {
+		t.Fatalf("previews = %+v, want one favorited preview with count 1", previews)
+	}
+}
+
+func TestListUsesPerRecipeFavoritesForVariationOf(t *testing.T) {
+	id := ptrObjectID()
+	store := &fakeStore{
+		getRecipeDocumentsFn: func(models.GetRecipesRequest) ([]models.Recipe, int64, error) {
+			return []models.Recipe{{Id: id}}, 1, nil
+		},
+		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
+			return map[string]models.FavoriteInfo{id.Hex(): {Count: 1, Favorited: true}}, nil
+		},
+		getFamilyFavoriteInfoFn: func([]string, string) (map[string]models.FavoriteInfo, error) {
+			t.Fatal("GetFamilyFavoriteInfo should not be called when listing a family's variations - each one shows its own exact favorite status")
+			return nil, nil
+		},
+	}
+	s := &Service{db: store}
+
+	previews, _, err := s.List(context.Background(), models.GetRecipesRequest{VariationOf: id.Hex()}, "user-1")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

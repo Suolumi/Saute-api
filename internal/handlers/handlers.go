@@ -217,6 +217,7 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.POST("/users/:id/send-password-reset", h.AdminSendPasswordReset, authLimiter)
 	adminRouter.DELETE("/users/:id/mcp-token", h.AdminRevokeMcpToken, authLimiter)
 	adminRouter.GET("/recipes", h.AdminListRecipes)
+	adminRouter.GET("/recipes/:id/favorites", h.AdminGetRecipeFavorites)
 	adminRouter.DELETE("/recipes/:id/variation-of", h.AdminDetachRecipeVariation, authLimiter)
 	adminRouter.GET("/system/stats", h.AdminStats)
 	adminRouter.POST("/system/cleanup-images", h.AdminCleanupImages, authLimiter)

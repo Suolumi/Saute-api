@@ -55,6 +55,7 @@ type Database interface {
 	DeleteFavoritesByRecipeID(ctx context.Context, recipeID string) error
 	GetFavoriteInfo(ctx context.Context, ids []string, userID string) (map[string]models.FavoriteInfo, error)
 	GetFamilyFavoriteInfo(ctx context.Context, rootIDs []string, userID string) (map[string]models.FavoriteInfo, error)
+	GetRecipeFavoriters(ctx context.Context, recipeID string, limit, offset int64) ([]models.UserView, int64, error)
 
 	CreateTranslationSuggestion(ctx context.Context, suggestion models.TranslationSuggestion) (models.TranslationSuggestion, error)
 	GetTranslationSuggestionById(ctx context.Context, id string) (models.TranslationSuggestion, error)

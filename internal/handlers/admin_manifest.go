@@ -114,6 +114,15 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		},
 	},
 	{
+		ID: "admin.recipes.favorites", Method: "GET", Path: "/admin/recipes/:id/favorites", Category: "recipes",
+		Label: "List recipe favorites", Description: "See who favorited a recipe, paginated.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Picker: "recipe", Required: true, Label: "Recipe"},
+			{Name: "limit", In: "query", Type: "int", Label: "Limit"},
+			{Name: "offset", In: "query", Type: "int", Label: "Offset"},
+		},
+	},
+	{
 		ID: "admin.system.stats", Method: "GET", Path: "/admin/system/stats", Category: "system",
 		Label: "System stats", Description: "User/recipe counts.",
 		Params: []models.AdminRouteParam{},
