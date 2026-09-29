@@ -83,8 +83,13 @@ type NutritionSuggestion struct {
 }
 
 // SubmitNutritionLinkRequest is POST /nutrition/ingredient-links' body.
+// IngredientUnit is the current recipe ingredient's own unit text (may be
+// blank for a bare count) - used only to decide whether GPer100ml or
+// GramsPerUnit is required to make this link resolvable (see
+// Service.validateIngredientUnitRequirement); it's never itself persisted.
 type SubmitNutritionLinkRequest struct {
 	IngredientName string   `json:"ingredient_name"`
+	IngredientUnit string   `json:"ingredient_unit,omitempty"`
 	NutritionID    string   `json:"nutrition_id"`
 	GPer100ml      *float64 `json:"g_per_100ml,omitempty"`
 	GramsPerUnit   *float64 `json:"grams_per_unit,omitempty"`

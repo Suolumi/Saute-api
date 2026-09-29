@@ -70,6 +70,8 @@ type fakeStore struct {
 	getIngredientNutritionLinkByNameLowerFn func(nameLower string) (models.IngredientNutritionLink, error)
 	getUnitAliasByAliasLowerFn              func(aliasLower string) (models.UnitAlias, error)
 	createIngredientNutritionLinkFn         func(name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	updateIngredientNutritionLinkFn         func(id, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	createUnitAliasFn                       func(alias string, unitID primitive.ObjectID) (models.UnitAlias, error)
 }
 
 func (f *fakeStore) CreateRecipe(authorID string, infos *models.CreateRecipe) (models.Recipe, error) {
@@ -367,7 +369,10 @@ func (f *fakeStore) CreateIngredientNutritionLink(_ context.Context, name string
 	}
 	return models.IngredientNutritionLink{}, nil
 }
-func (f *fakeStore) UpdateIngredientNutritionLink(context.Context, string, string, primitive.ObjectID, *float64, *float64) (models.IngredientNutritionLink, error) {
+func (f *fakeStore) UpdateIngredientNutritionLink(_ context.Context, id, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+	if f.updateIngredientNutritionLinkFn != nil {
+		return f.updateIngredientNutritionLinkFn(id, name, nutritionID, gPer100ml, gramsPerUnit)
+	}
 	return models.IngredientNutritionLink{}, nil
 }
 func (f *fakeStore) GetIngredientNutritionLinkById(context.Context, string) (models.IngredientNutritionLink, error) {
@@ -386,7 +391,10 @@ func (f *fakeStore) DeleteIngredientNutritionLink(context.Context, string) error
 	return nil
 }
 
-func (f *fakeStore) CreateUnitAlias(context.Context, string, primitive.ObjectID) (models.UnitAlias, error) {
+func (f *fakeStore) CreateUnitAlias(_ context.Context, alias string, unitID primitive.ObjectID) (models.UnitAlias, error) {
+	if f.createUnitAliasFn != nil {
+		return f.createUnitAliasFn(alias, unitID)
+	}
 	return models.UnitAlias{}, nil
 }
 func (f *fakeStore) UpdateUnitAlias(context.Context, string, string, primitive.ObjectID) (models.UnitAlias, error) {

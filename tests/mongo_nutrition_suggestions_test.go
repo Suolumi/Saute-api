@@ -39,8 +39,9 @@ func TestNutritionLinkFreshNameAppliesDirectly(t *testing.T) {
 	wheatFlour := insertTestNutritionIngredient(t, db, ctx, "Farine de blé")
 
 	density := 53.0
+	gramsPerUnit := 120.0
 	result, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: wheatFlour.Hex(), GPer100ml: &density,
+		IngredientName: "Flour", NutritionID: wheatFlour.Hex(), GPer100ml: &density, GramsPerUnit: &gramsPerUnit,
 	})
 	require.NoError(t, err)
 	assert.True(t, result.Applied, "a fresh ingredient name has no existing link to correct, so it applies immediately")
@@ -55,10 +56,14 @@ func TestNutritionLinkFreshNameAppliesDirectly(t *testing.T) {
 	assert.Equal(t, 53.0, *link.GPer100ml)
 }
 
-// TestNutritionLinkCorrectionBecomesSuggestionUntilApproved covers the one
-// case that still goes through review: a submission for an ingredient name
-// that already has a link becomes a pending suggestion, with no effect on
-// the live link until an admin approves it.
+// TestNutritionLinkCorrectionBecomesSuggestionUntilApproved covers the case
+// that still goes through review: a submission for an ingredient name that
+// already has a link, which would *overwrite* an already-set field (here,
+// its density), becomes a pending suggestion with no effect on the live
+// link until an admin approves it - unlike merely filling in a field that
+// was still empty, which applies directly (see
+// TestNutritionLinkFreshNameAppliesDirectly's sibling in nutrition_test.go,
+// TestSubmitNutritionLinkSuggestionFillingAnEmptyFieldAppliesDirectly).
 func TestNutritionLinkCorrectionBecomesSuggestionUntilApproved(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -68,21 +73,24 @@ func TestNutritionLinkCorrectionBecomesSuggestionUntilApproved(t *testing.T) {
 	submitter := insertTestUser(t, db, ctx, "ns-correction-submitter")
 	wheatFlour := insertTestNutritionIngredient(t, db, ctx, "Farine de blé")
 
+	density := 53.0
+	gramsPerUnit := 120.0
 	first, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: wheatFlour.Hex(),
+		IngredientName: "Flour", NutritionID: wheatFlour.Hex(), GPer100ml: &density, GramsPerUnit: &gramsPerUnit,
 	})
 	require.NoError(t, err)
 	require.True(t, first.Applied)
 	original := *first.Link
 
-	// A second submission for "flour" (different case) is a correction, not
-	// a second direct link - it becomes a pending suggestion instead.
+	// A second submission for "flour" (different case) that changes the
+	// already-set density is a correction - it becomes a pending suggestion
+	// instead of applying directly.
 	correctedDensity := 60.0
 	second, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
 		IngredientName: "flour", NutritionID: wheatFlour.Hex(), GPer100ml: &correctedDensity,
 	})
 	require.NoError(t, err)
-	assert.False(t, second.Applied, "an already-linked name is a correction, which requires review")
+	assert.False(t, second.Applied, "overwriting an already-set density requires review")
 	require.NotNil(t, second.Suggestion)
 	assert.Equal(t, models.NutritionSuggestionPending, second.Suggestion.Status)
 	require.NotNil(t, second.Suggestion.TargetID)
@@ -91,7 +99,8 @@ func TestNutritionLinkCorrectionBecomesSuggestionUntilApproved(t *testing.T) {
 	// Not yet applied - the live link is unchanged until approval.
 	unchanged, err := db.GetIngredientNutritionLinkByNameLower(ctx, "flour")
 	require.NoError(t, err)
-	assert.Nil(t, unchanged.GPer100ml)
+	require.NotNil(t, unchanged.GPer100ml)
+	assert.Equal(t, density, *unchanged.GPer100ml)
 
 	_, err = svc.ApproveNutritionSuggestion(ctx, second.Suggestion.Id.Hex(), admin.Hex())
 	require.NoError(t, err)
@@ -114,14 +123,16 @@ func TestNutritionLinkRejectedCorrectionLeavesLinkUnchanged(t *testing.T) {
 	submitter := insertTestUser(t, db, ctx, "ns-reject-submitter")
 	wheatFlour := insertTestNutritionIngredient(t, db, ctx, "Farine de blé")
 
+	gramsPerUnit := 5.0
 	first, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "Sugar", NutritionID: wheatFlour.Hex(),
+		IngredientName: "Sugar", NutritionID: wheatFlour.Hex(), GramsPerUnit: &gramsPerUnit,
 	})
 	require.NoError(t, err)
 	require.True(t, first.Applied)
 
+	otherNutritionID := insertTestNutritionIngredient(t, db, ctx, "Autre")
 	second, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "sugar", NutritionID: wheatFlour.Hex(),
+		IngredientName: "sugar", NutritionID: otherNutritionID.Hex(),
 	})
 	require.NoError(t, err)
 	require.False(t, second.Applied)

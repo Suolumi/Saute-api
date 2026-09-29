@@ -38,17 +38,25 @@ func (s *Service) ListIngredientNutritionLinks(ctx context.Context) ([]models.In
 
 // SubmitNutritionLinkSuggestion validates and applies a user-proposed
 // ingredient-name -> nutrition-entry link, optionally bundled with a
-// unit-alias for the same ingredient's unit text. An ingredient name (or
-// bundled unit alias) that doesn't yet exist goes live immediately - no
-// review. One that already matches an existing link/alias case-insensitively
-// is a *correction* instead: if either half of the submission is a
-// correction, the whole submission becomes a single pending suggestion
-// requiring admin approval (see docs/nutrition.md "Suggestions") rather
-// than applying directly - a shared link affects every recipe using that
-// ingredient name, so a change to one already in use gets reviewed even
-// though a first-time link doesn't. An admin correcting a link directly
-// uses the separate admin CRUD endpoints instead, which always apply
-// immediately regardless of this rule.
+// unit-alias for the same ingredient's unit text. IngredientUnit decides
+// whether a density or a per-unit weight is required for the link to
+// actually resolve (see validateIngredientUnitRequirement) - unlike the
+// admin CRUD endpoints, which have no single ingredient's unit to be smart
+// about and so carry no such requirement.
+//
+// Applying vs. reviewing is decided field by field against whatever link/
+// alias already exists for this name (see needsNutritionLinkReview): filling
+// in a field that was previously unset applies immediately, but overwriting
+// one that already had a value makes the *whole* submission a single
+// pending suggestion requiring admin approval (see docs/nutrition.md
+// "Suggestions") - a shared link affects every recipe using that ingredient
+// name, so changing something already in use gets reviewed even though
+// filling a gap doesn't. Either way the values actually stored/queued are
+// the *merged* result (submitted value, falling back to whatever the
+// existing link/alias already had) so a correction of just one field never
+// silently wipes the other. An admin correcting a link directly uses the
+// separate admin CRUD endpoints instead, which always apply immediately
+// with no requirement and no merging.
 func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID string, req models.SubmitNutritionLinkRequest) (models.SubmitNutritionLinkResponse, error) {
 	submittedBy, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
@@ -79,16 +87,16 @@ func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID stri
 		return models.SubmitNutritionLinkResponse{}, fmt.Errorf("%w: note must be at most %d characters", ErrInvalid, maxNutritionNoteLength)
 	}
 
-	var linkTargetID *primitive.ObjectID
+	var existingLink *models.IngredientNutritionLink
 	if existing, err := s.db.GetIngredientNutritionLinkByNameLower(ctx, strings.ToLower(name)); err == nil {
-		linkTargetID = existing.Id
+		existingLink = &existing
 	} else if !errors.Is(err, mongorepo.NutritionEntryNotFoundError) {
 		return models.SubmitNutritionLinkResponse{}, err
 	}
 
 	unitAlias := strings.TrimSpace(req.UnitAlias)
 	var unitID *primitive.ObjectID
-	var unitTargetID *primitive.ObjectID
+	var existingUnitAlias *models.UnitAlias
 	if unitAlias != "" {
 		if len(unitAlias) > maxNutritionNameLength {
 			return models.SubmitNutritionLinkResponse{}, fmt.Errorf("%w: unit alias must be at most %d characters", ErrInvalid, maxNutritionNameLength)
@@ -105,18 +113,42 @@ func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID stri
 		}
 		unitID = &parsedUnitID
 		if existing, err := s.db.GetUnitAliasByAliasLower(ctx, strings.ToLower(unitAlias)); err == nil {
-			unitTargetID = existing.Id
+			existingUnitAlias = &existing
 		} else if !errors.Is(err, mongorepo.NutritionEntryNotFoundError) {
 			return models.SubmitNutritionLinkResponse{}, err
 		}
 	}
 
-	if linkTargetID == nil && unitTargetID == nil {
-		link, err := s.db.CreateIngredientNutritionLink(ctx, name, nutritionID, req.GPer100ml, req.GramsPerUnit)
+	// Merge first: what would actually end up stored, whichever path this
+	// takes. A field left out of the request falls back to whatever the
+	// existing link already has (nil if there's no existing link either).
+	mergedGPer100ml := req.GPer100ml
+	if mergedGPer100ml == nil && existingLink != nil {
+		mergedGPer100ml = existingLink.GPer100ml
+	}
+	mergedGramsPerUnit := req.GramsPerUnit
+	if mergedGramsPerUnit == nil && existingLink != nil {
+		mergedGramsPerUnit = existingLink.GramsPerUnit
+	}
+
+	if err := s.validateIngredientUnitRequirement(ctx, req.IngredientUnit, mergedGPer100ml, mergedGramsPerUnit); err != nil {
+		return models.SubmitNutritionLinkResponse{}, err
+	}
+
+	needsReview := needsNutritionLinkReview(existingLink, nutritionID, req.GPer100ml, req.GramsPerUnit) ||
+		(unitID != nil && existingUnitAlias != nil && existingUnitAlias.UnitID != *unitID)
+
+	if !needsReview {
+		var link models.IngredientNutritionLink
+		if existingLink == nil {
+			link, err = s.db.CreateIngredientNutritionLink(ctx, name, nutritionID, mergedGPer100ml, mergedGramsPerUnit)
+		} else {
+			link, err = s.db.UpdateIngredientNutritionLink(ctx, existingLink.Id.Hex(), name, nutritionID, mergedGPer100ml, mergedGramsPerUnit)
+		}
 		if err != nil {
 			return models.SubmitNutritionLinkResponse{}, err
 		}
-		if unitID != nil {
+		if unitID != nil && existingUnitAlias == nil {
 			if _, err := s.db.CreateUnitAlias(ctx, unitAlias, *unitID); err != nil {
 				return models.SubmitNutritionLinkResponse{}, err
 			}
@@ -124,20 +156,76 @@ func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID stri
 		return models.SubmitNutritionLinkResponse{Applied: true, Link: &link}, nil
 	}
 
+	var linkTargetID *primitive.ObjectID
+	if existingLink != nil {
+		linkTargetID = existingLink.Id
+	}
 	suggestion := models.NutritionSuggestion{
 		SubmittedBy: submittedBy, Note: note, TargetID: linkTargetID,
-		IngredientName: name, NutritionID: nutritionID, GPer100ml: req.GPer100ml, GramsPerUnit: req.GramsPerUnit,
+		IngredientName: name, NutritionID: nutritionID, GPer100ml: mergedGPer100ml, GramsPerUnit: mergedGramsPerUnit,
 	}
 	if unitID != nil {
 		suggestion.UnitAlias = unitAlias
 		suggestion.UnitID = unitID
-		suggestion.UnitTargetID = unitTargetID
+		if existingUnitAlias != nil {
+			suggestion.UnitTargetID = existingUnitAlias.Id
+		}
 	}
 	created, err := s.db.CreateNutritionSuggestion(ctx, suggestion)
 	if err != nil {
 		return models.SubmitNutritionLinkResponse{}, err
 	}
 	return models.SubmitNutritionLinkResponse{Applied: false, Suggestion: &created}, nil
+}
+
+// needsNutritionLinkReview reports whether applying nutritionID/gPer100ml/
+// gramsPerUnit on top of existing would overwrite a value existing already
+// had - a nil existing (no link yet) never needs review, and a field the
+// request leaves blank never counts as an overwrite of that field.
+func needsNutritionLinkReview(existing *models.IngredientNutritionLink, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) bool {
+	if existing == nil {
+		return false
+	}
+	if existing.NutritionID != nutritionID {
+		return true
+	}
+	if existing.GPer100ml != nil && gPer100ml != nil && *existing.GPer100ml != *gPer100ml {
+		return true
+	}
+	if existing.GramsPerUnit != nil && gramsPerUnit != nil && *existing.GramsPerUnit != *gramsPerUnit {
+		return true
+	}
+	return false
+}
+
+// validateIngredientUnitRequirement enforces that a link submitted through
+// the contextual authoring/detail-page flows (the only callers that know
+// one specific recipe ingredient's current unit) will actually resolve:
+// mirrors resolveIngredientGrams's own resolution order, so a weight unit
+// needs neither field, a volume unit needs a density, and a blank or
+// unrecognized unit needs a per-unit weight. The admin CRUD endpoints never
+// call this - a link there isn't tied to any one ingredient's unit.
+func (s *Service) validateIngredientUnitRequirement(ctx context.Context, unitText string, gPer100ml, gramsPerUnit *float64) error {
+	unitText = strings.TrimSpace(unitText)
+	if unitText != "" {
+		units, err := s.db.ListToolboxUnits(ctx)
+		if err != nil {
+			return err
+		}
+		if unit, ok := s.resolveToolboxUnit(ctx, unitText, units); ok {
+			if unit.Kind == models.ToolboxUnitWeight {
+				return nil
+			}
+			if gPer100ml == nil {
+				return fmt.Errorf("%w: this ingredient's unit is measured by volume - a density (grams per 100ml) is required to link it", ErrInvalid)
+			}
+			return nil
+		}
+	}
+	if gramsPerUnit == nil {
+		return fmt.Errorf("%w: this ingredient has no recognized unit - a per-unit weight (grams per unit) is required to link it", ErrInvalid)
+	}
+	return nil
 }
 
 // --- Admin direct CRUD (links + unit aliases) ---

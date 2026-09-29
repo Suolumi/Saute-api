@@ -221,8 +221,9 @@ func TestSubmitNutritionLinkSuggestionAppliesDirectlyForAFreshName(t *testing.T)
 	s := &Service{db: store}
 	userID := primitive.NewObjectID().Hex()
 
+	gramsPerUnit := 50.0
 	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: nutritionID.Hex(),
+		IngredientName: "Flour", NutritionID: nutritionID.Hex(), GramsPerUnit: &gramsPerUnit,
 	})
 	if err != nil {
 		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
@@ -250,8 +251,9 @@ func TestSubmitNutritionLinkSuggestionBecomesCorrectionOnNameMatch(t *testing.T)
 	s := &Service{db: store}
 	userID := primitive.NewObjectID().Hex()
 
+	gramsPerUnit := 50.0
 	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: nutritionID.Hex(),
+		IngredientName: "Flour", NutritionID: nutritionID.Hex(), GramsPerUnit: &gramsPerUnit,
 	})
 	if err != nil {
 		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
@@ -261,6 +263,132 @@ func TestSubmitNutritionLinkSuggestionBecomesCorrectionOnNameMatch(t *testing.T)
 	}
 	if result.Suggestion.TargetID == nil || *result.Suggestion.TargetID != existingLinkID {
 		t.Fatalf("got TargetID=%v, want %v (existing link matched by name)", result.Suggestion.TargetID, existingLinkID)
+	}
+}
+
+func TestSubmitNutritionLinkSuggestionRejectsVolumeUnitWithoutDensity(t *testing.T) {
+	nutritionID := primitive.NewObjectID()
+	cup := cupUnit()
+	store := &fakeStore{
+		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		listToolboxUnitsFn:           func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{cup}, nil },
+	}
+	s := &Service{db: store}
+	userID := primitive.NewObjectID().Hex()
+
+	_, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
+		IngredientName: "Milk", IngredientUnit: "cup", NutritionID: nutritionID.Hex(),
+	})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("SubmitNutritionLinkSuggestion err = %v, want ErrInvalid (a volume unit needs a density)", err)
+	}
+}
+
+func TestSubmitNutritionLinkSuggestionWeightUnitNeedsNeitherField(t *testing.T) {
+	nutritionID := primitive.NewObjectID()
+	gram := gramUnit()
+	store := &fakeStore{
+		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		listToolboxUnitsFn:           func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{gram}, nil },
+	}
+	s := &Service{db: store}
+	userID := primitive.NewObjectID().Hex()
+
+	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
+		IngredientName: "Flour", IngredientUnit: "g", NutritionID: nutritionID.Hex(),
+	})
+	if err != nil {
+		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
+	}
+	if !result.Applied {
+		t.Fatal("got Applied=false, want true (a weight unit needs neither density nor grams-per-unit)")
+	}
+}
+
+func TestSubmitNutritionLinkSuggestionFillingAnEmptyFieldAppliesDirectly(t *testing.T) {
+	nutritionID := primitive.NewObjectID()
+	existingLinkID := primitive.NewObjectID()
+	existingGramsPerUnit := 90.0
+	var gotGPer100ml, gotGramsPerUnit *float64
+	updateCalled := false
+	store := &fakeStore{
+		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
+			if nameLower == "crème fraîche" {
+				return models.IngredientNutritionLink{Id: &existingLinkID, Name: "Crème fraîche", NutritionID: nutritionID, GramsPerUnit: &existingGramsPerUnit}, nil
+			}
+			return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
+		},
+		updateIngredientNutritionLinkFn: func(id, name string, nid primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+			updateCalled = true
+			gotGPer100ml, gotGramsPerUnit = gPer100ml, gramsPerUnit
+			return models.IngredientNutritionLink{Id: &existingLinkID, Name: name, NutritionID: nid, GPer100ml: gPer100ml, GramsPerUnit: gramsPerUnit}, nil
+		},
+	}
+	s := &Service{db: store}
+	userID := primitive.NewObjectID().Hex()
+
+	newDensity := 100.0
+	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
+		IngredientName: "Crème fraîche", NutritionID: nutritionID.Hex(), GPer100ml: &newDensity,
+	})
+	if err != nil {
+		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
+	}
+	if !result.Applied || result.Suggestion != nil {
+		t.Fatalf("got %+v, want Applied=true with no Suggestion (filling a previously-empty density needs no review)", result)
+	}
+	if !updateCalled {
+		t.Fatal("UpdateIngredientNutritionLink was not called")
+	}
+	if gotGPer100ml == nil || *gotGPer100ml != newDensity {
+		t.Fatalf("got GPer100ml=%v, want %v", gotGPer100ml, newDensity)
+	}
+	if gotGramsPerUnit == nil || *gotGramsPerUnit != existingGramsPerUnit {
+		t.Fatalf("got GramsPerUnit=%v, want %v (the existing value should be preserved, not wiped)", gotGramsPerUnit, existingGramsPerUnit)
+	}
+}
+
+func TestSubmitNutritionLinkSuggestionOverwritingAnExistingFieldRequiresReview(t *testing.T) {
+	nutritionID := primitive.NewObjectID()
+	existingLinkID := primitive.NewObjectID()
+	existingDensity := 92.0
+	existingGramsPerUnit := 15.0
+	store := &fakeStore{
+		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
+			if nameLower == "olive oil" {
+				return models.IngredientNutritionLink{Id: &existingLinkID, Name: "Olive oil", NutritionID: nutritionID, GPer100ml: &existingDensity, GramsPerUnit: &existingGramsPerUnit}, nil
+			}
+			return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
+		},
+		createIngredientNutritionLinkFn: func(string, primitive.ObjectID, *float64, *float64) (models.IngredientNutritionLink, error) {
+			t.Fatal("CreateIngredientNutritionLink should not be called when the submission needs review")
+			return models.IngredientNutritionLink{}, nil
+		},
+		updateIngredientNutritionLinkFn: func(string, string, primitive.ObjectID, *float64, *float64) (models.IngredientNutritionLink, error) {
+			t.Fatal("UpdateIngredientNutritionLink should not be called when the submission needs review")
+			return models.IngredientNutritionLink{}, nil
+		},
+	}
+	s := &Service{db: store}
+	userID := primitive.NewObjectID().Hex()
+
+	newDensity := 105.0
+	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
+		IngredientName: "Olive oil", NutritionID: nutritionID.Hex(), GPer100ml: &newDensity,
+	})
+	if err != nil {
+		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
+	}
+	if result.Applied || result.Suggestion == nil {
+		t.Fatalf("got %+v, want Applied=false with Suggestion set (overwriting a set density needs review)", result)
+	}
+	if result.Suggestion.GPer100ml == nil || *result.Suggestion.GPer100ml != newDensity {
+		t.Fatalf("got Suggestion.GPer100ml=%v, want %v (the submitted value, not the old one)", result.Suggestion.GPer100ml, newDensity)
+	}
+	if result.Suggestion.TargetID == nil || *result.Suggestion.TargetID != existingLinkID {
+		t.Fatalf("got TargetID=%v, want %v", result.Suggestion.TargetID, existingLinkID)
 	}
 }
 
