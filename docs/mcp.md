@@ -60,7 +60,7 @@ There is intentionally no MCP delete tool. Recipe deletion remains available thr
 
 MCP tool calls carry structured JSON, which makes uploading binary picture data through them impractical (it has to be inlined as base64), so picture attachment is REST/website-only — see below.
 
-Recipes must have a nonblank title, quantity of at least one, nonnegative times, at least one named ingredient, and at least one step with a description. `category` is one of `food` (default) or `diy`; a supported `kind` is required only when `category` is `food` and is ignored otherwise. Incomplete recipes are rejected rather than saved as drafts.
+Recipes must have a nonblank title, quantity of at least one, nonnegative times, at least one named ingredient, and at least one step with a description. `category` is one of `food` (default) or `diy`; a supported `kind` is required only when `category` is `food` and is ignored otherwise. A step's optional `timer_minutes` (a countdown shown to viewers on that step) must be nonnegative. Incomplete recipes are rejected rather than saved as drafts.
 
 ## Localization
 

@@ -362,7 +362,8 @@ type Ingredient struct {
 }
 
 type Step struct {
-	Title       string `bson:"title,omitempty" json:"title"`
-	Description string `bson:"description,omitempty" json:"description"`
-	Picture     string `bson:"picture,omitempty" json:"picture,omitempty" jsonschema:"Filename of an existing picture already attached to one of this recipe's steps, or empty. New pictures cannot be uploaded through MCP; attach photos via the website."`
+	Title        string `bson:"title,omitempty" json:"title"`
+	Description  string `bson:"description,omitempty" json:"description"`
+	Picture      string `bson:"picture,omitempty" json:"picture,omitempty" jsonschema:"Filename of an existing picture already attached to one of this recipe's steps, or empty. New pictures cannot be uploaded through MCP; attach photos via the website."`
+	TimerMinutes int    `bson:"timer_minutes,omitempty" json:"timer_minutes,omitempty" jsonschema:"Optional countdown timer for this step, in minutes (e.g. 30 for a 30-minute simmer). 0 or omitted means no timer."`
 }

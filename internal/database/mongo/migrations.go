@@ -47,5 +47,40 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("create translation override indexes: %w", err)
 	}
+	if _, err := c.db.Collection(toolboxIngredientsCollection).Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "name_lower", Value: 1}}, Options: options.Index().SetUnique(true).SetName("toolbox_ingredients_name_lower_unique")},
+	); err != nil {
+		return fmt.Errorf("create toolbox ingredient indexes: %w", err)
+	}
+	if _, err := c.db.Collection(toolboxUnitsCollection).Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "name_lower", Value: 1}}, Options: options.Index().SetUnique(true).SetName("toolbox_units_name_lower_unique")},
+	); err != nil {
+		return fmt.Errorf("create toolbox unit indexes: %w", err)
+	}
+	if _, err := c.db.Collection(toolboxSuggestionsCollection).Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "status", Value: 1}, {Key: "created_at", Value: -1}}, Options: options.Index().SetName("toolbox_suggestions_status_created")},
+	); err != nil {
+		return fmt.Errorf("create toolbox suggestion indexes: %w", err)
+	}
+	if _, err := c.db.Collection(nutritionIngredientsCollection).Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "name_lower", Value: 1}}, Options: options.Index().SetName("nutrition_ingredients_name_lower")},
+	); err != nil {
+		return fmt.Errorf("create nutrition ingredient indexes: %w", err)
+	}
+	if _, err := c.db.Collection(nutritionLinksCollection).Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "name_lower", Value: 1}}, Options: options.Index().SetUnique(true).SetName("nutrition_links_name_lower_unique")},
+	); err != nil {
+		return fmt.Errorf("create nutrition link indexes: %w", err)
+	}
+	if _, err := c.db.Collection(unitAliasesCollection).Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "alias_lower", Value: 1}}, Options: options.Index().SetUnique(true).SetName("unit_aliases_alias_lower_unique")},
+	); err != nil {
+		return fmt.Errorf("create unit alias indexes: %w", err)
+	}
+	if _, err := c.db.Collection(nutritionSuggestionsCollection).Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "status", Value: 1}, {Key: "created_at", Value: -1}}, Options: options.Index().SetName("nutrition_suggestions_status_created")},
+	); err != nil {
+		return fmt.Errorf("create nutrition suggestion indexes: %w", err)
+	}
 	return nil
 }

@@ -68,5 +68,54 @@ type Database interface {
 	DeleteTranslationOverride(ctx context.Context, id string) (models.TranslationOverride, error)
 	DeleteTranslationOverridesByFieldPrefix(ctx context.Context, recipeID, locale, prefix string) error
 
+	CreateToolboxIngredient(ctx context.Context, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error)
+	UpdateToolboxIngredient(ctx context.Context, id string, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error)
+	ListToolboxIngredients(ctx context.Context) ([]models.ToolboxIngredient, error)
+	GetToolboxIngredientById(ctx context.Context, id string) (models.ToolboxIngredient, error)
+	GetToolboxIngredientByNameLower(ctx context.Context, nameLower string) (models.ToolboxIngredient, error)
+	SetToolboxIngredientTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error
+
+	CreateToolboxUnit(ctx context.Context, name, symbol, kind string, toBase float64) (models.ToolboxUnit, error)
+	UpdateToolboxUnit(ctx context.Context, id string, name, symbol, kind string, toBase float64) (models.ToolboxUnit, error)
+	ListToolboxUnits(ctx context.Context) ([]models.ToolboxUnit, error)
+	GetToolboxUnitById(ctx context.Context, id string) (models.ToolboxUnit, error)
+	GetToolboxUnitByNameLower(ctx context.Context, nameLower string) (models.ToolboxUnit, error)
+	SetToolboxUnitTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error
+
+	CreateToolboxSubstitution(ctx context.Context, problem, solution, tag string) (models.ToolboxSubstitution, error)
+	UpdateToolboxSubstitution(ctx context.Context, id string, problem, solution, tag string) (models.ToolboxSubstitution, error)
+	ListToolboxSubstitutions(ctx context.Context) ([]models.ToolboxSubstitution, error)
+	GetToolboxSubstitutionById(ctx context.Context, id string) (models.ToolboxSubstitution, error)
+	GetToolboxSubstitutionByProblemLower(ctx context.Context, problemLower string) (models.ToolboxSubstitution, error)
+	SetToolboxSubstitutionTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error
+
+	CreateToolboxSuggestion(ctx context.Context, suggestion models.ToolboxSuggestion) (models.ToolboxSuggestion, error)
+	GetToolboxSuggestionById(ctx context.Context, id string) (models.ToolboxSuggestion, error)
+	ListToolboxSuggestions(ctx context.Context, status, kind string, limit, offset int64) ([]models.ToolboxSuggestion, int64, error)
+	UpdateToolboxSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
+	SeedToolboxDefaults(ctx context.Context) error
+
+	ListNutritionIngredients(ctx context.Context) ([]models.NutritionIngredient, error)
+	GetNutritionIngredientById(ctx context.Context, id string) (models.NutritionIngredient, error)
+
+	CreateIngredientNutritionLink(ctx context.Context, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	UpdateIngredientNutritionLink(ctx context.Context, id string, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	GetIngredientNutritionLinkById(ctx context.Context, id string) (models.IngredientNutritionLink, error)
+	GetIngredientNutritionLinkByNameLower(ctx context.Context, nameLower string) (models.IngredientNutritionLink, error)
+	ListIngredientNutritionLinks(ctx context.Context) ([]models.IngredientNutritionLink, error)
+	DeleteIngredientNutritionLink(ctx context.Context, id string) error
+
+	CreateUnitAlias(ctx context.Context, alias string, unitID primitive.ObjectID) (models.UnitAlias, error)
+	UpdateUnitAlias(ctx context.Context, id string, alias string, unitID primitive.ObjectID) (models.UnitAlias, error)
+	GetUnitAliasByAliasLower(ctx context.Context, aliasLower string) (models.UnitAlias, error)
+	ListUnitAliases(ctx context.Context) ([]models.UnitAlias, error)
+	DeleteUnitAlias(ctx context.Context, id string) error
+
+	CreateNutritionSuggestion(ctx context.Context, suggestion models.NutritionSuggestion) (models.NutritionSuggestion, error)
+	GetNutritionSuggestionById(ctx context.Context, id string) (models.NutritionSuggestion, error)
+	ListNutritionSuggestions(ctx context.Context, status string, limit, offset int64) ([]models.NutritionSuggestion, int64, error)
+	UpdateNutritionSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
+	SeedNutritionDefaults(ctx context.Context) error
+
 	RawDatabase() *mongodriver.Database
 }

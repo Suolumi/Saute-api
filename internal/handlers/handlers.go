@@ -61,6 +61,14 @@ func New(cfg *config.Config) (*Handlers, error) {
 		_ = db.Close(context.Background())
 		return nil, err
 	}
+	if err := db.SeedToolboxDefaults(startupCtx); err != nil {
+		_ = db.Close(context.Background())
+		return nil, err
+	}
+	if err := db.SeedNutritionDefaults(startupCtx); err != nil {
+		_ = db.Close(context.Background())
+		return nil, err
+	}
 
 	jm := jwt_manager.New(cfg.Jwt)
 
@@ -101,6 +109,10 @@ func New(cfg *config.Config) (*Handlers, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SeedToolboxDefaults above runs before the translator/service exist, so
+	// it can't translate what it inserts - catch up now, one-shot per
+	// startup (a no-op once every entry already has a SourceLocale).
+	recipeService.EnsureToolboxTranslations(startupCtx)
 
 	mcpAuth := mcp_server.NewAuthenticator(db, cfg.MCP.JWTSecret, cfg.MCP.TokenExpiration)
 	mcpServer, err := mcp_server.New(cfg.MCP, recipeService, mcpAuth.Verifier())
@@ -226,6 +238,18 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.POST("/translation-suggestions/:id/reject", h.AdminRejectTranslationSuggestion, authLimiter)
 	adminRouter.GET("/translation-overrides", h.AdminListTranslationOverrides)
 	adminRouter.DELETE("/translation-overrides/:id", h.AdminClearTranslationOverride, authLimiter)
+	adminRouter.GET("/toolbox-suggestions", h.AdminListToolboxSuggestions)
+	adminRouter.POST("/toolbox-suggestions/:id/approve", h.AdminApproveToolboxSuggestion, authLimiter)
+	adminRouter.POST("/toolbox-suggestions/:id/reject", h.AdminRejectToolboxSuggestion, authLimiter)
+	adminRouter.GET("/nutrition-suggestions", h.AdminListNutritionSuggestions)
+	adminRouter.POST("/nutrition-suggestions/:id/approve", h.AdminApproveNutritionSuggestion, authLimiter)
+	adminRouter.POST("/nutrition-suggestions/:id/reject", h.AdminRejectNutritionSuggestion, authLimiter)
+	adminRouter.POST("/nutrition-links", h.AdminCreateNutritionLink, authLimiter)
+	adminRouter.PUT("/nutrition-links/:id", h.AdminUpdateNutritionLink, authLimiter)
+	adminRouter.DELETE("/nutrition-links/:id", h.AdminDeleteNutritionLink, authLimiter)
+	adminRouter.POST("/unit-aliases", h.AdminCreateUnitAlias, authLimiter)
+	adminRouter.PUT("/unit-aliases/:id", h.AdminUpdateUnitAlias, authLimiter)
+	adminRouter.DELETE("/unit-aliases/:id", h.AdminDeleteUnitAlias, authLimiter)
 
 	// Recipes routes
 	unprotectedRouter.GET("/recipes", h.GetRecipes)
@@ -240,9 +264,24 @@ func (h *Handlers) RegisterEndpoints() {
 	protectedRouter.POST("/recipes/:id/pictures", h.AddRecipePicture, h.RecipeLoaderMiddleware, middleware.BodyLimit("10M"))
 	protectedRouter.DELETE("/recipes/:id/pictures/:filename", h.RemoveRecipePicture, h.RecipeLoaderMiddleware)
 	protectedRouter.POST("/recipes/:id/translation-suggestions", h.SubmitTranslationSuggestion, authLimiter)
+	unprotectedRouter.GET("/recipes/:id/nutrition", h.GetRecipeNutrition)
 
 	// Recipes images
 	unprotectedRouter.Static("/recipe-pictures", h.cfg.RecipeImageDir)
+
+	// Toolbox routes
+	unprotectedRouter.GET("/toolbox/ingredients", h.ListToolboxIngredients)
+	unprotectedRouter.GET("/toolbox/units", h.ListToolboxUnits)
+	unprotectedRouter.GET("/toolbox/substitutions", h.ListToolboxSubstitutions)
+	protectedRouter.POST("/toolbox/ingredient-suggestions", h.SubmitIngredientSuggestion, authLimiter)
+	protectedRouter.POST("/toolbox/unit-suggestions", h.SubmitUnitSuggestion, authLimiter)
+	protectedRouter.POST("/toolbox/substitution-suggestions", h.SubmitSubstitutionSuggestion, authLimiter)
+
+	// Nutrition routes
+	unprotectedRouter.GET("/nutrition/ingredients", h.ListNutritionIngredients)
+	unprotectedRouter.GET("/nutrition/ingredient-links", h.ListIngredientNutritionLinks)
+	unprotectedRouter.GET("/nutrition/unit-aliases", h.ListUnitAliases)
+	protectedRouter.POST("/nutrition/ingredient-links", h.SubmitNutritionLinkSuggestion, authLimiter)
 }
 
 // cleanupImages removes unreferenced picture files older than 24h from both

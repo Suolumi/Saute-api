@@ -172,4 +172,107 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 			{Name: "id", In: "path", Type: "string", Required: true, Label: "Override ID"},
 		},
 	},
+	{
+		ID: "admin.toolbox.listSuggestions", Method: "GET", Path: "/admin/toolbox-suggestions", Category: "toolbox",
+		Label: "List toolbox suggestions", Description: "Browse user-submitted Toolbox ingredient/unit/substitution additions and corrections awaiting review.",
+		Params: []models.AdminRouteParam{
+			{Name: "status", In: "query", Type: "string", Label: "Status"},
+			{Name: "kind", In: "query", Type: "string", Label: "Kind (ingredient / unit / substitution)"},
+			{Name: "limit", In: "query", Type: "int", Label: "Limit"},
+			{Name: "offset", In: "query", Type: "int", Label: "Offset"},
+		},
+	},
+	{
+		ID: "admin.toolbox.approve", Method: "POST", Path: "/admin/toolbox-suggestions/:id/approve", Category: "toolbox",
+		Label: "Approve toolbox suggestion", Description: "Apply a submitted addition or correction to the live Toolbox reference list.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
+		},
+	},
+	{
+		ID: "admin.toolbox.reject", Method: "POST", Path: "/admin/toolbox-suggestions/:id/reject", Category: "toolbox",
+		Label: "Reject toolbox suggestion", Description: "Dismiss a submitted Toolbox addition/correction with no effect.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
+		},
+	},
+	{
+		ID: "admin.nutrition.listSuggestions", Method: "GET", Path: "/admin/nutrition-suggestions", Category: "nutrition",
+		Label: "List nutrition suggestions", Description: "Browse user-submitted ingredient nutrition link additions and corrections awaiting review.",
+		Params: []models.AdminRouteParam{
+			{Name: "status", In: "query", Type: "string", Label: "Status"},
+			{Name: "limit", In: "query", Type: "int", Label: "Limit"},
+			{Name: "offset", In: "query", Type: "int", Label: "Offset"},
+		},
+	},
+	{
+		ID: "admin.nutrition.approve", Method: "POST", Path: "/admin/nutrition-suggestions/:id/approve", Category: "nutrition",
+		Label: "Approve nutrition suggestion", Description: "Apply a submitted link addition/correction to the live ingredient nutrition link table.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
+		},
+	},
+	{
+		ID: "admin.nutrition.reject", Method: "POST", Path: "/admin/nutrition-suggestions/:id/reject", Category: "nutrition",
+		Label: "Reject nutrition suggestion", Description: "Dismiss a submitted nutrition link addition/correction with no effect.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
+		},
+	},
+	{
+		ID: "admin.nutrition.createLink", Method: "POST", Path: "/admin/nutrition-links", Category: "nutrition",
+		Label: "Create nutrition link", Description: "Directly link an ingredient name to a nutrition entry - applies immediately, no review.",
+		Params: []models.AdminRouteParam{
+			{Name: "ingredient_name", In: "body", Type: "string", Required: true, Label: "Ingredient name"},
+			{Name: "nutrition_id", In: "body", Type: "string", Required: true, Label: "Nutrition entry ID"},
+			{Name: "g_per_100ml", In: "body", Type: "string", Label: "Density (g/100ml)"},
+			{Name: "grams_per_unit", In: "body", Type: "string", Label: "Grams per unit"},
+		},
+	},
+	{
+		ID: "admin.nutrition.updateLink", Method: "PUT", Path: "/admin/nutrition-links/:id", Category: "nutrition",
+		Label: "Update nutrition link", Description: "Directly overwrite an existing ingredient nutrition link - applies immediately, no review.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Link ID"},
+			{Name: "ingredient_name", In: "body", Type: "string", Required: true, Label: "Ingredient name"},
+			{Name: "nutrition_id", In: "body", Type: "string", Required: true, Label: "Nutrition entry ID"},
+			{Name: "g_per_100ml", In: "body", Type: "string", Label: "Density (g/100ml)"},
+			{Name: "grams_per_unit", In: "body", Type: "string", Label: "Grams per unit"},
+		},
+	},
+	{
+		ID: "admin.nutrition.deleteLink", Method: "DELETE", Path: "/admin/nutrition-links/:id", Category: "nutrition",
+		Label: "Delete nutrition link", Description: "Revert an ingredient back to fully unlinked.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Link ID"},
+		},
+	},
+	{
+		ID: "admin.nutrition.createUnitAlias", Method: "POST", Path: "/admin/unit-aliases", Category: "nutrition",
+		Label: "Create unit alias", Description: "Directly map a free-text unit string to a Toolbox unit - applies immediately, no review.",
+		Params: []models.AdminRouteParam{
+			{Name: "alias", In: "body", Type: "string", Required: true, Label: "Alias text"},
+			{Name: "unit_id", In: "body", Type: "string", Required: true, Label: "Toolbox unit ID"},
+		},
+	},
+	{
+		ID: "admin.nutrition.updateUnitAlias", Method: "PUT", Path: "/admin/unit-aliases/:id", Category: "nutrition",
+		Label: "Update unit alias", Description: "Directly overwrite an existing unit alias - applies immediately, no review.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Alias ID"},
+			{Name: "alias", In: "body", Type: "string", Required: true, Label: "Alias text"},
+			{Name: "unit_id", In: "body", Type: "string", Required: true, Label: "Toolbox unit ID"},
+		},
+	},
+	{
+		ID: "admin.nutrition.deleteUnitAlias", Method: "DELETE", Path: "/admin/unit-aliases/:id", Category: "nutrition",
+		Label: "Delete unit alias", Description: "Remove a unit alias outright.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Alias ID"},
+		},
+	},
 }

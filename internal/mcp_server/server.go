@@ -122,9 +122,10 @@ type PictureOutput struct {
 // PictureOutput does for recipe-level pictures) instead of a bare filename,
 // which is meaningless to a caller without the server's picture base URL.
 type StepOutput struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description"`
-	Picture     string `json:"picture,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Description  string `json:"description"`
+	Picture      string `json:"picture,omitempty"`
+	TimerMinutes int    `json:"timer_minutes,omitempty"`
 }
 
 // RecipeRefOutput is a reference ingredient's resolved target.
@@ -232,6 +233,8 @@ func New(cfg *config.MCPConfig, recipes *recipe_service.Service, verifier auth.T
 	mcp.AddTool(server, &mcp.Tool{Name: "create_recipe", Description: "Create a complete recipe owned by the authenticated user. Pictures are not supported here; attach them via the website. Set variation_of (found via search_recipes) to submit this as a variation of an existing recipe instead of a new root. Each ingredient needs only a name - quantity, unit, and label are all optional."}, result.create)
 	mcp.AddTool(server, &mcp.Tool{Name: "update_recipe", Description: "Patch a recipe owned by the authenticated user and optionally reorder or remove existing pictures via keep_picture_ids. New pictures cannot be uploaded here; attach them via the website."}, result.update)
 	mcp.AddTool(server, &mcp.Tool{Name: "link_recipe_variation", Description: "Turn one of the authenticated user's own standalone recipes into a variation of another recipe (any author), found via search_recipes. Fails if the recipe is already a variation, already has its own variations, the target is itself a variation, categories don't match, or it would create a recipe that references its own family. Irreversible through this API."}, result.linkVariation)
+	mcp.AddTool(server, &mcp.Tool{Name: "convert_quantity", Description: "Convert an amount from one Toolbox unit to another (e.g. grams to cups). ingredient is only needed when from_unit and to_unit are different kinds (one weight, one converting to/from volume) - it looks up that ingredient's density. Not needed when both units are the same kind (e.g. g to kg)."}, result.convertQuantity)
+	mcp.AddTool(server, &mcp.Tool{Name: "get_recipe_nutrition", Description: "Get best-effort computed nutrition (calories + headline macros) for any recipe (not just the authenticated user's own) at a given serving count. Only ingredients confidently linked to the nutrition reference list are counted - matched_count/total_count says how much of the recipe's ingredient list actually contributed, since some ingredients may be unlinked or unresolvable."}, result.getRecipeNutrition)
 	stream := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 90 << 20, PropagateRequestCancellation: true,
 	})
@@ -326,7 +329,7 @@ func encodeOffsetCursor(offset int) string {
 func (s *Server) stepOutputs(steps []models.Step) []StepOutput {
 	outputs := make([]StepOutput, 0, len(steps))
 	for _, step := range steps {
-		output := StepOutput{Title: step.Title, Description: step.Description}
+		output := StepOutput{Title: step.Title, Description: step.Description, TimerMinutes: step.TimerMinutes}
 		if step.Picture != "" {
 			output.Picture = s.pictureBase + step.Picture
 		}
@@ -504,4 +507,104 @@ func (s *Server) linkVariation(ctx context.Context, req *mcp.CallToolRequest, in
 		return nil, RecipeOutput{}, err
 	}
 	return nil, s.recipeOutput(updated), nil
+}
+
+// ConvertQuantityInput drives convert_quantity. Ingredient is only consulted
+// when from_unit and to_unit are different kinds (weight vs volume) - a
+// same-kind conversion (e.g. g to kg) never needs it.
+type ConvertQuantityInput struct {
+	Amount     float64 `json:"amount" jsonschema:"Amount to convert"`
+	FromUnit   string  `json:"from_unit" jsonschema:"Unit name or symbol to convert from, e.g. 'g' or 'cup' - see the Toolbox's unit list"`
+	ToUnit     string  `json:"to_unit" jsonschema:"Unit name or symbol to convert to"`
+	Ingredient string  `json:"ingredient,omitempty" jsonschema:"Ingredient name to look up density for, e.g. 'Milk' - required only when from_unit and to_unit are different kinds (one weight, one volume)"`
+}
+
+type ConvertQuantityOutput struct {
+	Result float64 `json:"result"`
+	Unit   string  `json:"unit"`
+}
+
+func findToolboxUnit(units []models.ToolboxUnit, query string) (models.ToolboxUnit, bool) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	for _, unit := range units {
+		if strings.ToLower(unit.Name) == q || strings.ToLower(unit.Symbol) == q {
+			return unit, true
+		}
+	}
+	return models.ToolboxUnit{}, false
+}
+
+func findToolboxIngredient(ingredients []models.ToolboxIngredient, query string) (models.ToolboxIngredient, bool) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	for _, ingredient := range ingredients {
+		if strings.ToLower(ingredient.Name) == q {
+			return ingredient, true
+		}
+	}
+	return models.ToolboxIngredient{}, false
+}
+
+func (s *Server) convertQuantity(ctx context.Context, req *mcp.CallToolRequest, input ConvertQuantityInput) (*mcp.CallToolResult, ConvertQuantityOutput, error) {
+	if _, err := userWithScope(req, "recipes:read"); err != nil {
+		return nil, ConvertQuantityOutput{}, err
+	}
+	units, err := s.recipes.ListToolboxUnits(ctx, "")
+	if err != nil {
+		return nil, ConvertQuantityOutput{}, err
+	}
+	fromUnit, ok := findToolboxUnit(units, input.FromUnit)
+	if !ok {
+		return nil, ConvertQuantityOutput{}, fmt.Errorf("unknown unit %q", input.FromUnit)
+	}
+	toUnit, ok := findToolboxUnit(units, input.ToUnit)
+	if !ok {
+		return nil, ConvertQuantityOutput{}, fmt.Errorf("unknown unit %q", input.ToUnit)
+	}
+
+	// density only matters when converting across kinds - a same-kind
+	// conversion cancels it out below regardless of its value.
+	density := 100.0
+	if fromUnit.Kind != toUnit.Kind {
+		if strings.TrimSpace(input.Ingredient) == "" {
+			return nil, ConvertQuantityOutput{}, fmt.Errorf("ingredient is required to convert between a weight and a volume unit")
+		}
+		ingredients, err := s.recipes.ListToolboxIngredients(ctx, "")
+		if err != nil {
+			return nil, ConvertQuantityOutput{}, err
+		}
+		ingredient, ok := findToolboxIngredient(ingredients, input.Ingredient)
+		if !ok {
+			return nil, ConvertQuantityOutput{}, fmt.Errorf("unknown ingredient %q", input.Ingredient)
+		}
+		density = ingredient.GPer100ml
+	}
+
+	fromBase := input.Amount * fromUnit.ToBase
+	grams := fromBase
+	if fromUnit.Kind == models.ToolboxUnitVolume {
+		grams = fromBase * density / 100
+	}
+	toBaseAmount := grams
+	if toUnit.Kind == models.ToolboxUnitVolume {
+		toBaseAmount = grams / (density / 100)
+	}
+	return nil, ConvertQuantityOutput{Result: toBaseAmount / toUnit.ToBase, Unit: toUnit.Symbol}, nil
+}
+
+// GetRecipeNutritionInput drives get_recipe_nutrition. Servings 0 or
+// omitted means the recipe's own base servings (no scaling).
+type GetRecipeNutritionInput struct {
+	RecipeID string `json:"recipe_id" jsonschema:"Recipe identifier"`
+	Servings int    `json:"servings,omitempty" jsonschema:"Serving count to scale totals to; 0 or omitted means the recipe's own base servings"`
+}
+
+func (s *Server) getRecipeNutrition(ctx context.Context, req *mcp.CallToolRequest, input GetRecipeNutritionInput) (*mcp.CallToolResult, models.RecipeNutrition, error) {
+	if _, err := userWithScope(req, "recipes:read"); err != nil {
+		return nil, models.RecipeNutrition{}, err
+	}
+	nutrition, err := s.recipes.GetRecipeNutrition(ctx, input.RecipeID, input.Servings)
+	if err != nil {
+		return nil, models.RecipeNutrition{}, err
+	}
+	return nil, nutrition, nil
 }

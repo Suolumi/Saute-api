@@ -56,6 +56,20 @@ type fakeStore struct {
 	repointVariations       int
 	promoteRecipeToRoot     int
 	repointRecipeReferences int
+
+	listToolboxUnitsFn                      func() ([]models.ToolboxUnit, error)
+	listToolboxIngredientsFn                func() ([]models.ToolboxIngredient, error)
+	listToolboxSubstitutionsFn              func() ([]models.ToolboxSubstitution, error)
+	getToolboxIngredientByIdFn              func(id string) (models.ToolboxIngredient, error)
+	getToolboxUnitByIdFn                    func(id string) (models.ToolboxUnit, error)
+	getToolboxSubstitutionByIdFn            func(id string) (models.ToolboxSubstitution, error)
+	setToolboxIngredientTranslationsFn      func(id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error
+	setToolboxUnitTranslationsFn            func(id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error
+	setToolboxSubstitutionTranslationsFn    func(id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error
+	getNutritionIngredientByIdFn            func(id string) (models.NutritionIngredient, error)
+	getIngredientNutritionLinkByNameLowerFn func(nameLower string) (models.IngredientNutritionLink, error)
+	getUnitAliasByAliasLowerFn              func(aliasLower string) (models.UnitAlias, error)
+	createIngredientNutritionLinkFn         func(name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 }
 
 func (f *fakeStore) CreateRecipe(authorID string, infos *models.CreateRecipe) (models.Recipe, error) {
@@ -240,9 +254,177 @@ func (f *fakeStore) DeleteTranslationOverridesByFieldPrefix(_ context.Context, r
 	return nil
 }
 
+func (f *fakeStore) CreateToolboxIngredient(context.Context, string, float64, string) (models.ToolboxIngredient, error) {
+	return models.ToolboxIngredient{}, nil
+}
+func (f *fakeStore) UpdateToolboxIngredient(context.Context, string, string, float64, string) (models.ToolboxIngredient, error) {
+	return models.ToolboxIngredient{}, nil
+}
+func (f *fakeStore) ListToolboxIngredients(context.Context) ([]models.ToolboxIngredient, error) {
+	if f.listToolboxIngredientsFn != nil {
+		return f.listToolboxIngredientsFn()
+	}
+	return nil, nil
+}
+func (f *fakeStore) GetToolboxIngredientById(_ context.Context, id string) (models.ToolboxIngredient, error) {
+	if f.getToolboxIngredientByIdFn != nil {
+		return f.getToolboxIngredientByIdFn(id)
+	}
+	return models.ToolboxIngredient{}, nil
+}
+func (f *fakeStore) GetToolboxIngredientByNameLower(context.Context, string) (models.ToolboxIngredient, error) {
+	return models.ToolboxIngredient{}, mongorepo.ToolboxEntryNotFoundError
+}
+func (f *fakeStore) SetToolboxIngredientTranslations(_ context.Context, id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error {
+	if f.setToolboxIngredientTranslationsFn != nil {
+		return f.setToolboxIngredientTranslationsFn(id, sourceLocale, translations)
+	}
+	return nil
+}
+
+func (f *fakeStore) CreateToolboxUnit(context.Context, string, string, string, float64) (models.ToolboxUnit, error) {
+	return models.ToolboxUnit{}, nil
+}
+func (f *fakeStore) UpdateToolboxUnit(context.Context, string, string, string, string, float64) (models.ToolboxUnit, error) {
+	return models.ToolboxUnit{}, nil
+}
+func (f *fakeStore) ListToolboxUnits(context.Context) ([]models.ToolboxUnit, error) {
+	if f.listToolboxUnitsFn != nil {
+		return f.listToolboxUnitsFn()
+	}
+	return nil, nil
+}
+func (f *fakeStore) GetToolboxUnitById(_ context.Context, id string) (models.ToolboxUnit, error) {
+	if f.getToolboxUnitByIdFn != nil {
+		return f.getToolboxUnitByIdFn(id)
+	}
+	return models.ToolboxUnit{}, nil
+}
+func (f *fakeStore) GetToolboxUnitByNameLower(context.Context, string) (models.ToolboxUnit, error) {
+	return models.ToolboxUnit{}, mongorepo.ToolboxEntryNotFoundError
+}
+func (f *fakeStore) SetToolboxUnitTranslations(_ context.Context, id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error {
+	if f.setToolboxUnitTranslationsFn != nil {
+		return f.setToolboxUnitTranslationsFn(id, sourceLocale, translations)
+	}
+	return nil
+}
+
+func (f *fakeStore) CreateToolboxSubstitution(context.Context, string, string, string) (models.ToolboxSubstitution, error) {
+	return models.ToolboxSubstitution{}, nil
+}
+func (f *fakeStore) UpdateToolboxSubstitution(context.Context, string, string, string, string) (models.ToolboxSubstitution, error) {
+	return models.ToolboxSubstitution{}, nil
+}
+func (f *fakeStore) ListToolboxSubstitutions(context.Context) ([]models.ToolboxSubstitution, error) {
+	if f.listToolboxSubstitutionsFn != nil {
+		return f.listToolboxSubstitutionsFn()
+	}
+	return nil, nil
+}
+func (f *fakeStore) GetToolboxSubstitutionById(_ context.Context, id string) (models.ToolboxSubstitution, error) {
+	if f.getToolboxSubstitutionByIdFn != nil {
+		return f.getToolboxSubstitutionByIdFn(id)
+	}
+	return models.ToolboxSubstitution{}, nil
+}
+func (f *fakeStore) GetToolboxSubstitutionByProblemLower(context.Context, string) (models.ToolboxSubstitution, error) {
+	return models.ToolboxSubstitution{}, mongorepo.ToolboxEntryNotFoundError
+}
+func (f *fakeStore) SetToolboxSubstitutionTranslations(_ context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error {
+	if f.setToolboxSubstitutionTranslationsFn != nil {
+		return f.setToolboxSubstitutionTranslationsFn(id, sourceLocale, translations)
+	}
+	return nil
+}
+
+func (f *fakeStore) CreateToolboxSuggestion(context.Context, models.ToolboxSuggestion) (models.ToolboxSuggestion, error) {
+	return models.ToolboxSuggestion{}, nil
+}
+func (f *fakeStore) GetToolboxSuggestionById(context.Context, string) (models.ToolboxSuggestion, error) {
+	return models.ToolboxSuggestion{}, nil
+}
+func (f *fakeStore) ListToolboxSuggestions(context.Context, string, string, int64, int64) ([]models.ToolboxSuggestion, int64, error) {
+	return nil, 0, nil
+}
+func (f *fakeStore) UpdateToolboxSuggestionStatus(context.Context, string, string, string) error {
+	return nil
+}
+
+func (f *fakeStore) ListNutritionIngredients(context.Context) ([]models.NutritionIngredient, error) {
+	return nil, nil
+}
+func (f *fakeStore) GetNutritionIngredientById(_ context.Context, id string) (models.NutritionIngredient, error) {
+	if f.getNutritionIngredientByIdFn != nil {
+		return f.getNutritionIngredientByIdFn(id)
+	}
+	return models.NutritionIngredient{}, nil
+}
+
+func (f *fakeStore) CreateIngredientNutritionLink(_ context.Context, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+	if f.createIngredientNutritionLinkFn != nil {
+		return f.createIngredientNutritionLinkFn(name, nutritionID, gPer100ml, gramsPerUnit)
+	}
+	return models.IngredientNutritionLink{}, nil
+}
+func (f *fakeStore) UpdateIngredientNutritionLink(context.Context, string, string, primitive.ObjectID, *float64, *float64) (models.IngredientNutritionLink, error) {
+	return models.IngredientNutritionLink{}, nil
+}
+func (f *fakeStore) GetIngredientNutritionLinkById(context.Context, string) (models.IngredientNutritionLink, error) {
+	return models.IngredientNutritionLink{}, nil
+}
+func (f *fakeStore) GetIngredientNutritionLinkByNameLower(_ context.Context, nameLower string) (models.IngredientNutritionLink, error) {
+	if f.getIngredientNutritionLinkByNameLowerFn != nil {
+		return f.getIngredientNutritionLinkByNameLowerFn(nameLower)
+	}
+	return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
+}
+func (f *fakeStore) ListIngredientNutritionLinks(context.Context) ([]models.IngredientNutritionLink, error) {
+	return nil, nil
+}
+func (f *fakeStore) DeleteIngredientNutritionLink(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeStore) CreateUnitAlias(context.Context, string, primitive.ObjectID) (models.UnitAlias, error) {
+	return models.UnitAlias{}, nil
+}
+func (f *fakeStore) UpdateUnitAlias(context.Context, string, string, primitive.ObjectID) (models.UnitAlias, error) {
+	return models.UnitAlias{}, nil
+}
+func (f *fakeStore) GetUnitAliasByAliasLower(_ context.Context, aliasLower string) (models.UnitAlias, error) {
+	if f.getUnitAliasByAliasLowerFn != nil {
+		return f.getUnitAliasByAliasLowerFn(aliasLower)
+	}
+	return models.UnitAlias{}, mongorepo.NutritionEntryNotFoundError
+}
+func (f *fakeStore) ListUnitAliases(context.Context) ([]models.UnitAlias, error) {
+	return nil, nil
+}
+func (f *fakeStore) DeleteUnitAlias(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeStore) CreateNutritionSuggestion(_ context.Context, suggestion models.NutritionSuggestion) (models.NutritionSuggestion, error) {
+	id := primitive.NewObjectID()
+	suggestion.Id = &id
+	return suggestion, nil
+}
+func (f *fakeStore) GetNutritionSuggestionById(context.Context, string) (models.NutritionSuggestion, error) {
+	return models.NutritionSuggestion{}, nil
+}
+func (f *fakeStore) ListNutritionSuggestions(context.Context, string, int64, int64) ([]models.NutritionSuggestion, int64, error) {
+	return nil, 0, nil
+}
+func (f *fakeStore) UpdateNutritionSuggestionStatus(context.Context, string, string, string) error {
+	return nil
+}
+
 type fakeTranslator struct {
-	translateFn func(recipe models.Recipe, to string) (models.Recipe, error)
-	detectFn    func(recipe models.Recipe) (string, error)
+	translateFn      func(recipe models.Recipe, to string) (models.Recipe, error)
+	detectFn         func(recipe models.Recipe) (string, error)
+	translateTextsFn func(texts []string, to string) ([]string, error)
+	detectLocaleFn   func(text string) (string, error)
 }
 
 func (f fakeTranslator) TranslateRecipe(recipe models.Recipe, to string) (models.Recipe, error) {
@@ -250,6 +432,22 @@ func (f fakeTranslator) TranslateRecipe(recipe models.Recipe, to string) (models
 }
 func (f fakeTranslator) GetRecipeLocale(recipe models.Recipe) (string, error) {
 	return f.detectFn(recipe)
+}
+func (f fakeTranslator) TranslateTexts(texts []string, to string) ([]string, error) {
+	if f.translateTextsFn != nil {
+		return f.translateTextsFn(texts, to)
+	}
+	out := make([]string, len(texts))
+	for i, text := range texts {
+		out[i] = text + "-" + to
+	}
+	return out, nil
+}
+func (f fakeTranslator) DetectLocale(text string) (string, error) {
+	if f.detectLocaleFn != nil {
+		return f.detectLocaleFn(text)
+	}
+	return "en", nil
 }
 
 func canonicalRecipe() models.Recipe {

@@ -62,6 +62,14 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusConflict, "Recipe has changed since this suggestion was submitted", nil, c)
 	case errors.Is(err, recipe_service.ErrOverrideNotFound):
 		return errorResponse(http.StatusNotFound, "Translation override not found", nil, c)
+	case errors.Is(err, recipe_service.ErrToolboxSuggestionNotFound):
+		return errorResponse(http.StatusNotFound, "Toolbox suggestion not found", nil, c)
+	case errors.Is(err, recipe_service.ErrToolboxEntryNotFound):
+		return errorResponse(http.StatusNotFound, "Toolbox entry not found", nil, c)
+	case errors.Is(err, recipe_service.ErrNutritionSuggestionNotFound):
+		return errorResponse(http.StatusNotFound, "Nutrition suggestion not found", nil, c)
+	case errors.Is(err, recipe_service.ErrNutritionIngredientNotFound):
+		return errorResponse(http.StatusNotFound, "Nutrition ingredient not found", nil, c)
 	default:
 		return errorResponse(http.StatusInternalServerError, "Could not process recipe", err, c)
 	}

@@ -86,9 +86,10 @@ func (s *Service) SubmitTranslationSuggestion(ctx context.Context, recipeID, use
 		steps[i] = models.Step{
 			Title:       strings.TrimSpace(step.Title),
 			Description: strings.TrimSpace(step.Description),
-			// Picture is structural, not translatable content - always taken
-			// from canonical, same as the base translation pipeline.
-			Picture: canonical.Steps[i].Picture,
+			// Picture/TimerMinutes are structural, not translatable content -
+			// always taken from canonical, same as the base translation pipeline.
+			Picture:      canonical.Steps[i].Picture,
+			TimerMinutes: canonical.Steps[i].TimerMinutes,
 		}
 	}
 

@@ -98,9 +98,10 @@ func (t *Translator) TranslateRecipe(recipe models.Recipe, to string) (models.Re
 	stDesc := translations[2+len(ingredients)+len(stepTitles) : 2+len(ingredients)+len(stepTitles)+len(stepDesc)]
 	for i := range recipe.Steps {
 		st = append(st, models.Step{
-			Title:       stTitle[i].Text,
-			Description: stDesc[i].Text,
-			Picture:     recipe.Steps[i].Picture,
+			Title:        stTitle[i].Text,
+			Description:  stDesc[i].Text,
+			Picture:      recipe.Steps[i].Picture,
+			TimerMinutes: recipe.Steps[i].TimerMinutes,
 		})
 	}
 	return models.Recipe{
@@ -126,7 +127,31 @@ func (t *Translator) GetRecipeLocale(recipe models.Recipe) (string, error) {
 	for _, ingredient := range recipe.Ingredients {
 		ingredients = append(ingredients, ingredient.Name)
 	}
-	detected, err := t.client.DetectLanguage(context.TODO(), []string{strings.Join(ingredients, " ")})
+	return t.DetectLocale(strings.Join(ingredients, " "))
+}
+
+// TranslateTexts translates an arbitrary batch of short strings into to, in
+// one API call - used for content that isn't a whole Recipe, e.g. the
+// Toolbox's ingredient/unit/substitution entries.
+func (t *Translator) TranslateTexts(texts []string, to string) ([]string, error) {
+	baseTo := language.MustParse(to)
+	translations, err := t.client.Translate(context.TODO(), texts, baseTo, &translate.Options{
+		Format: translate.Text,
+		Model:  "nmt",
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(translations))
+	for i, translation := range translations {
+		out[i] = translation.Text
+	}
+	return out, nil
+}
+
+// DetectLocale reports the most likely BCP-47 language of text.
+func (t *Translator) DetectLocale(text string) (string, error) {
+	detected, err := t.client.DetectLanguage(context.TODO(), []string{text})
 	if err != nil {
 		return "", err
 	}
@@ -142,5 +167,5 @@ func (t *Translator) GetRecipeLocale(recipe models.Recipe) (string, error) {
 			highestIndex = i
 		}
 	}
-	return detected[0][highestIndex].Language.String(), err
+	return detected[0][highestIndex].Language.String(), nil
 }
