@@ -553,9 +553,11 @@ func (s *Service) GetRecipeNutrition(ctx context.Context, recipeID string, servi
 // A recipe_ref ingredient recurses into the referenced recipe's own totals,
 // scaled by "how many batches" (the ingredient's Quantity, or 1 when unset -
 // see recipes.ts's getReferenceQuantity: a blank quantity means "use the
-// whole recipe"), and counts as matched only if that recursion itself
-// matched anything - a reference to a recipe with zero linkable ingredients
-// contributes nothing, same as any other unresolvable line. visited guards
+// whole recipe") - but only when Unit doesn't name an actual weight/volume
+// unit, see computeRecipeRefLine. It counts as matched only if that
+// recursion itself matched anything - a reference to a recipe with zero
+// linkable ingredients contributes nothing, same as any other unresolvable
+// line. visited guards
 // against a reference cycle (should already be impossible via the write-time
 // guards in service.go, but this is what actually prevents infinite
 // recursion if one ever slips through): a recipe already on the current
@@ -604,11 +606,24 @@ func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Reci
 
 // computeRecipeRefLine resolves one recipe_ref ingredient's own contribution:
 // the referenced recipe's full nutrition (at its own base servings) times
-// how many batches this ingredient calls for.
+// how many batches this ingredient calls for. "Batches" is only a defined
+// reading of Quantity when Unit doesn't name an actual weight/volume unit
+// (blank, or free text like "batch"/"batches" that isn't a registered
+// ToolboxUnit) - a quantity given in a real weight or volume unit (e.g. "20g"
+// of a sauce sub-recipe) means a fraction of one batch, but nothing tracks a
+// recipe's total yield weight/volume to compute that fraction from, so
+// rather than silently reading "20g" as "20 batches" (wildly overcounting -
+// the referenced recipe's *entire* nutrition, ×20), that case is left
+// unmatched, same as any other quantity this feature can't resolve.
 func (s *Service) computeRecipeRefLine(ctx context.Context, ingredient models.Ingredient, unitCtx nutritionUnitContext, visited map[string]bool) (models.IngredientNutrition, bool) {
 	refID := ingredient.RecipeRef.Hex()
 	if visited[refID] {
 		return models.IngredientNutrition{}, false
+	}
+	if unitText := strings.TrimSpace(ingredient.Unit); unitText != "" {
+		if _, ok := s.resolveToolboxUnit(ctx, unitText, unitCtx.units); ok {
+			return models.IngredientNutrition{}, false
+		}
 	}
 	referenced, err := s.db.GetRecipeById(refID)
 	if err != nil {

@@ -462,6 +462,55 @@ func TestGetRecipeNutritionRecipeRefBlankQuantityMeansOneBatch(t *testing.T) {
 	}
 }
 
+func TestGetRecipeNutritionRecipeRefNonUnitTextStillMeansBatches(t *testing.T) {
+	subID := primitive.NewObjectID()
+	parentID := primitive.NewObjectID()
+	sub := models.Recipe{Id: &subID, Quantity: 1, Ingredients: []models.Ingredient{{Name: "Sugar", Quantity: 100, Unit: "g"}}}
+	parent := models.Recipe{
+		Id: &parentID, Quantity: 4,
+		Ingredients: []models.Ingredient{{RecipeRef: &subID, Quantity: 2, Unit: "batches"}}, // free text, not a registered unit
+	}
+	store := sugarLinkedStore(map[string]models.Recipe{subID.Hex(): sub, parentID.Hex(): parent})
+	s := &Service{db: store}
+
+	got, err := s.GetRecipeNutrition(context.Background(), parentID.Hex(), 4)
+	if err != nil {
+		t.Fatalf("GetRecipeNutrition: %v", err)
+	}
+	if got.Kcal != 800 || got.MatchedCount != 1 {
+		t.Fatalf("got %+v, want kcal=800 matched=1 (\"batches\" isn't a registered unit, so it still reads as a batch count)", got)
+	}
+}
+
+// TestGetRecipeNutritionRecipeRefWeightUnitIsNotReadAsBatches is the
+// regression case this behavior exists for: an author writing "20g of
+// sauce" means 20 grams of the finished sub-recipe, not 20 batches of it -
+// with no tracked total yield weight to convert 20g into a fraction of one
+// batch, the line must be left unmatched rather than misread as "20
+// batches" and multiply the sub-recipe's entire nutrition by 20.
+func TestGetRecipeNutritionRecipeRefWeightUnitIsNotReadAsBatches(t *testing.T) {
+	subID := primitive.NewObjectID()
+	parentID := primitive.NewObjectID()
+	sub := models.Recipe{Id: &subID, Quantity: 1, Ingredients: []models.Ingredient{{Name: "Sugar", Quantity: 100, Unit: "g"}}}
+	parent := models.Recipe{
+		Id: &parentID, Quantity: 4,
+		Ingredients: []models.Ingredient{{RecipeRef: &subID, Quantity: 20, Unit: "g"}}, // 20g of sauce, not 20 batches
+	}
+	store := sugarLinkedStore(map[string]models.Recipe{subID.Hex(): sub, parentID.Hex(): parent})
+	s := &Service{db: store}
+
+	got, err := s.GetRecipeNutrition(context.Background(), parentID.Hex(), 4)
+	if err != nil {
+		t.Fatalf("GetRecipeNutrition: %v", err)
+	}
+	if got.Kcal != 0 || got.MatchedCount != 0 || got.TotalCount != 1 {
+		t.Fatalf("got %+v, want kcal=0 matched=0 total=1 (a weight-unit quantity can't be read as a batch count, so it's left unmatched, not scaled ×20)", got)
+	}
+	if len(got.Ingredients) != 1 || got.Ingredients[0].Matched {
+		t.Fatalf("got ingredient line %+v, want unmatched", got.Ingredients)
+	}
+}
+
 func TestGetRecipeNutritionRecipeRefUnmatchedWhenSubRecipeHasNoMatches(t *testing.T) {
 	subID := primitive.NewObjectID()
 	parentID := primitive.NewObjectID()
