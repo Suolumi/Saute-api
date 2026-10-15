@@ -72,6 +72,9 @@ type fakeStore struct {
 	createIngredientNutritionLinkFn         func(name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	updateIngredientNutritionLinkFn         func(id, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	createUnitAliasFn                       func(alias string, unitID primitive.ObjectID) (models.UnitAlias, error)
+
+	// feedback is the in-memory feedback collection (see feedback_test.go).
+	feedback map[string]models.Feedback
 }
 
 func (f *fakeStore) CreateRecipe(authorID string, infos *models.CreateRecipe) (models.Recipe, error) {

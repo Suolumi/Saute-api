@@ -70,6 +70,10 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusNotFound, "Nutrition suggestion not found", nil, c)
 	case errors.Is(err, recipe_service.ErrNutritionIngredientNotFound):
 		return errorResponse(http.StatusNotFound, "Nutrition ingredient not found", nil, c)
+	case errors.Is(err, recipe_service.ErrFeedbackNotFound):
+		return errorResponse(http.StatusNotFound, "Feedback not found", nil, c)
+	case errors.Is(err, recipe_service.ErrFeedbackClosed):
+		return errorResponse(http.StatusConflict, "Feedback is closed", nil, c)
 	default:
 		return errorResponse(http.StatusInternalServerError, "Could not process recipe", err, c)
 	}

@@ -50,5 +50,21 @@ func (c *Client) ReferencedPictures(ctx context.Context) (map[string]struct{}, e
 			}
 		}
 	}
+
+	feedback, err := c.db.Collection(feedbackCollection).Find(ctx, bson.D{}, options.Find().SetProjection(bson.D{{Key: "photos", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	var feedbackPhotos []struct {
+		Photos []string `bson:"photos"`
+	}
+	if err := feedback.All(ctx, &feedbackPhotos); err != nil {
+		return nil, err
+	}
+	for _, item := range feedbackPhotos {
+		for _, photo := range item.Photos {
+			references[photo] = struct{}{}
+		}
+	}
 	return references, nil
 }

@@ -275,4 +275,36 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 			{Name: "id", In: "path", Type: "string", Required: true, Label: "Alias ID"},
 		},
 	},
+	{
+		ID: "admin.feedback.list", Method: "GET", Path: "/admin/feedback", Category: "feedback",
+		Label: "List feedback", Description: "Browse the feedback board's bug reports and ideas by tab: new (not yet opened by an admin), open, done, declined, or all.",
+		Params: []models.AdminRouteParam{
+			{Name: "tab", In: "query", Type: "string", Label: "Tab"},
+			{Name: "limit", In: "query", Type: "int", Label: "Limit"},
+			{Name: "offset", In: "query", Type: "int", Label: "Offset"},
+		},
+	},
+	{
+		ID: "admin.feedback.setStatus", Method: "POST", Path: "/admin/feedback/:id/status", Category: "feedback",
+		Label: "Set feedback status", Description: "Mark a feedback done or declined (its author gets an unread badge), or reopen it. Votes are kept.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Feedback ID"},
+			{Name: "status", In: "body", Type: "string", Required: true, Label: "Status (open, done, declined)"},
+		},
+	},
+	{
+		ID: "admin.feedback.markSeen", Method: "POST", Path: "/admin/feedback/:id/seen", Category: "feedback",
+		Label: "Mark feedback seen", Description: "Take a feedback out of the admin \"New\" tab.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Feedback ID"},
+		},
+	},
+	{
+		ID: "feedback.delete", Method: "DELETE", Path: "/feedback/:id", Category: "feedback",
+		Label: "Delete feedback", Description: "Permanently delete a feedback and its photos, whatever its status.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Feedback ID"},
+		},
+	},
 }

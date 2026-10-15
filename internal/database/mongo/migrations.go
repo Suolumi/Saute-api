@@ -82,5 +82,13 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("create nutrition suggestion indexes: %w", err)
 	}
+	if _, err := c.db.Collection(feedbackCollection).Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "vote_count", Value: -1}, {Key: "created_at", Value: -1}}, Options: options.Index().SetName("feedback_status_votes")},
+		{Keys: bson.D{{Key: "status", Value: 1}, {Key: "created_at", Value: -1}}, Options: options.Index().SetName("feedback_status_created")},
+		{Keys: bson.D{{Key: "author", Value: 1}, {Key: "author_unread", Value: 1}}, Options: options.Index().SetName("feedback_author_unread")},
+		{Keys: bson.D{{Key: "admin_seen", Value: 1}}, Options: options.Index().SetName("feedback_admin_seen")},
+	}); err != nil {
+		return fmt.Errorf("create feedback indexes: %w", err)
+	}
 	return nil
 }

@@ -207,6 +207,16 @@ type Store interface {
 	GetNutritionSuggestionById(ctx context.Context, id string) (models.NutritionSuggestion, error)
 	ListNutritionSuggestions(ctx context.Context, status string, limit, offset int64) ([]models.NutritionSuggestion, int64, error)
 	UpdateNutritionSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
+
+	CreateFeedback(ctx context.Context, feedback models.Feedback) (models.Feedback, error)
+	GetFeedbackById(ctx context.Context, id string) (models.Feedback, error)
+	ListFeedback(ctx context.Context, params models.ListFeedbackParams) ([]models.Feedback, int64, error)
+	UpdateFeedbackContent(ctx context.Context, id string, content models.FeedbackContent) (models.Feedback, error)
+	DeleteFeedback(ctx context.Context, id string) (models.Feedback, error)
+	SetFeedbackVote(ctx context.Context, id, userID string, vote bool) error
+	SetFeedbackStatus(ctx context.Context, id, status string) (models.Feedback, error)
+	MarkFeedbackAdminSeen(ctx context.Context, id string) error
+	MarkFeedbackAuthorSeen(ctx context.Context, id, authorID string) error
 }
 
 // Translator is the slice of *translator.Translator the service needs. A nil

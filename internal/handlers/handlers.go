@@ -250,6 +250,9 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.POST("/unit-aliases", h.AdminCreateUnitAlias, authLimiter)
 	adminRouter.PUT("/unit-aliases/:id", h.AdminUpdateUnitAlias, authLimiter)
 	adminRouter.DELETE("/unit-aliases/:id", h.AdminDeleteUnitAlias, authLimiter)
+	adminRouter.GET("/feedback", h.AdminListFeedback)
+	adminRouter.POST("/feedback/:id/status", h.AdminSetFeedbackStatus, authLimiter)
+	adminRouter.POST("/feedback/:id/seen", h.AdminMarkFeedbackSeen)
 
 	// Recipes routes
 	unprotectedRouter.GET("/recipes", h.GetRecipes)
@@ -282,6 +285,17 @@ func (h *Handlers) RegisterEndpoints() {
 	unprotectedRouter.GET("/nutrition/ingredient-links", h.ListIngredientNutritionLinks)
 	unprotectedRouter.GET("/nutrition/unit-aliases", h.ListUnitAliases)
 	protectedRouter.POST("/nutrition/ingredient-links", h.SubmitNutritionLinkSuggestion, authLimiter)
+
+	// Feedback routes
+	unprotectedRouter.GET("/feedback", h.ListFeedback)
+	protectedRouter.GET("/feedback/updates", h.FeedbackUpdates)
+	unprotectedRouter.GET("/feedback/:id", h.GetFeedback)
+	protectedRouter.POST("/feedback", h.CreateFeedback, authLimiter, middleware.BodyLimit("30M"))
+	protectedRouter.PATCH("/feedback/:id", h.UpdateFeedback, authLimiter, middleware.BodyLimit("30M"))
+	protectedRouter.DELETE("/feedback/:id", h.DeleteFeedback, authLimiter)
+	protectedRouter.POST("/feedback/:id/vote", h.VoteFeedback)
+	protectedRouter.DELETE("/feedback/:id/vote", h.UnvoteFeedback)
+	protectedRouter.POST("/feedback/:id/seen", h.MarkFeedbackSeen)
 }
 
 // cleanupImages removes unreferenced picture files older than 24h from both
