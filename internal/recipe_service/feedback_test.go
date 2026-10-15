@@ -3,6 +3,7 @@ package recipe_service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -76,6 +77,21 @@ func (f *fakeStore) SetFeedbackStatus(_ context.Context, id, status string) (mod
 	feedback.Status = status
 	f.feedback[id] = feedback
 	return feedback, nil
+}
+func (f *fakeStore) SetFeedbackTranslation(_ context.Context, id string, updatedAt time.Time, sourceLocale, locale string, translation *models.FeedbackTranslation) error {
+	feedback, ok := f.feedback[id]
+	if !ok || !feedback.UpdatedAt.Equal(updatedAt) {
+		return nil
+	}
+	feedback.SourceLocale = sourceLocale
+	if translation != nil {
+		if feedback.Translations == nil {
+			feedback.Translations = map[string]models.FeedbackTranslation{}
+		}
+		feedback.Translations[locale] = *translation
+	}
+	f.feedback[id] = feedback
+	return nil
 }
 func (f *fakeStore) MarkFeedbackAdminSeen(context.Context, string) error          { return nil }
 func (f *fakeStore) MarkFeedbackAuthorSeen(context.Context, string, string) error { return nil }
@@ -243,4 +259,44 @@ func TestUpdateFeedbackKeepsPhotosWhenOmitted(t *testing.T) {
 	view, err = s.UpdateFeedback(ctx, id, author, keepOne, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"b.jpg"}, view.Photos)
+}
+
+func TestTranslateFeedbackOnDemandAndCached(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeStore{}
+	detects, translations := 0, 0
+	translator := &fakeTranslator{
+		detectLocaleFn: func(string) (string, error) { detects++; return "fr", nil },
+		translateTextsFn: func(texts []string, to string) ([]string, error) {
+			translations++
+			return []string{"EN " + texts[0], "EN " + texts[1]}, nil
+		},
+	}
+	s := &Service{db: store, translator: translator, targetLocales: []string{"en", "fr", "fi"}, imageDir: t.TempDir()}
+	created, err := s.CreateFeedback(ctx, primitive.NewObjectID().Hex(), validFeedback(), nil)
+	require.NoError(t, err)
+	id := created.Id.Hex()
+	assert.Zero(t, detects+translations, "creating must not translate")
+
+	got, err := s.TranslateFeedback(ctx, id, "en")
+	require.NoError(t, err)
+	assert.Equal(t, "EN Timer doesn't ring", got.Title)
+	assert.Equal(t, "fr", got.SourceLocale)
+	assert.False(t, got.SameLanguage)
+
+	_, err = s.TranslateFeedback(ctx, id, "en")
+	require.NoError(t, err)
+	assert.Equal(t, 1, translations, "second request is served from the cache")
+
+	same, err := s.TranslateFeedback(ctx, id, "fr-CA")
+	require.NoError(t, err)
+	assert.True(t, same.SameLanguage)
+	assert.Equal(t, "Timer doesn't ring", same.Title)
+	assert.Equal(t, 1, detects, "source locale is detected once")
+
+	_, err = s.TranslateFeedback(ctx, id, "de")
+	assert.ErrorIs(t, err, ErrInvalid)
+
+	_, err = (&Service{db: store}).TranslateFeedback(ctx, id, "en")
+	assert.ErrorIs(t, err, ErrTranslationUnavailable)
 }

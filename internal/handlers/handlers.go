@@ -290,6 +290,7 @@ func (h *Handlers) RegisterEndpoints() {
 	unprotectedRouter.GET("/feedback", h.ListFeedback)
 	protectedRouter.GET("/feedback/updates", h.FeedbackUpdates)
 	unprotectedRouter.GET("/feedback/:id", h.GetFeedback)
+	unprotectedRouter.POST("/feedback/:id/translate", h.TranslateFeedback, authLimiter, middleware.BodyLimit("1M"))
 	protectedRouter.POST("/feedback", h.CreateFeedback, authLimiter, middleware.BodyLimit("30M"))
 	protectedRouter.PATCH("/feedback/:id", h.UpdateFeedback, authLimiter, middleware.BodyLimit("30M"))
 	protectedRouter.DELETE("/feedback/:id", h.DeleteFeedback, authLimiter)

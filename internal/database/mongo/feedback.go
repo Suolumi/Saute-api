@@ -145,6 +145,9 @@ func (c *Client) UpdateFeedbackContent(ctx context.Context, id string, content m
 			{Key: "link_path", Value: content.LinkPath},
 			{Key: "search_text", Value: content.SearchText},
 			{Key: "updated_at", Value: time.Now().UTC()},
+		}}, {Key: "$unset", Value: bson.D{
+			{Key: "source_locale", Value: ""},
+			{Key: "translations", Value: ""},
 		}}},
 		options.FindOneAndUpdate().SetReturnDocument(options.After),
 	).Decode(&updated)
@@ -248,6 +251,26 @@ func (c *Client) MarkFeedbackAuthorSeen(ctx context.Context, id, authorID string
 	_, err = c.db.Collection(feedbackCollection).UpdateOne(ctx,
 		bson.D{{Key: "_id", Value: objectID}, {Key: "author", Value: authorObjectID}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "author_unread", Value: false}}}},
+	)
+	return err
+}
+
+// SetFeedbackTranslation stores the detected source locale and, when
+// translation is non-nil, the translation into locale. It only applies if
+// the feedback hasn't been edited since updatedAt, so a translation of
+// outdated text is never cached.
+func (c *Client) SetFeedbackTranslation(ctx context.Context, id string, updatedAt time.Time, sourceLocale, locale string, translation *models.FeedbackTranslation) error {
+	objectID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return FeedbackNotFoundError
+	}
+	set := bson.D{{Key: "source_locale", Value: sourceLocale}}
+	if translation != nil {
+		set = append(set, bson.E{Key: "translations." + locale, Value: translation})
+	}
+	_, err = c.db.Collection(feedbackCollection).UpdateOne(ctx,
+		bson.D{{Key: "_id", Value: objectID}, {Key: "updated_at", Value: updatedAt}},
+		bson.D{{Key: "$set", Value: set}},
 	)
 	return err
 }

@@ -74,6 +74,8 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusNotFound, "Feedback not found", nil, c)
 	case errors.Is(err, recipe_service.ErrFeedbackClosed):
 		return errorResponse(http.StatusConflict, "Feedback is closed", nil, c)
+	case errors.Is(err, recipe_service.ErrTranslationUnavailable):
+		return errorResponse(http.StatusServiceUnavailable, "Translation is unavailable", nil, c)
 	default:
 		return errorResponse(http.StatusInternalServerError, "Could not process recipe", err, c)
 	}

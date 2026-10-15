@@ -37,10 +37,37 @@ type Feedback struct {
 	AdminSeen bool `bson:"admin_seen"`
 	// AuthorUnread is set when an admin closes the item and cleared once the
 	// author has seen the new status.
-	AuthorUnread bool       `bson:"author_unread"`
-	CreatedAt    time.Time  `bson:"created_at"`
-	UpdatedAt    time.Time  `bson:"updated_at"`
-	ClosedAt     *time.Time `bson:"closed_at,omitempty"`
+	AuthorUnread bool `bson:"author_unread"`
+	// SourceLocale is the detected language of Title/Description, filled the
+	// first time someone asks for a translation.
+	SourceLocale string `bson:"source_locale,omitempty"`
+	// Translations caches on-demand translations by locale. Editing the
+	// feedback clears it.
+	Translations map[string]FeedbackTranslation `bson:"translations,omitempty"`
+	CreatedAt    time.Time                      `bson:"created_at"`
+	UpdatedAt    time.Time                      `bson:"updated_at"`
+	ClosedAt     *time.Time                     `bson:"closed_at,omitempty"`
+}
+
+// FeedbackTranslation is a Feedback's title and description in one locale.
+type FeedbackTranslation struct {
+	Title       string `bson:"title" json:"title"`
+	Description string `bson:"description" json:"description"`
+}
+
+// TranslateFeedbackRequest is the body of POST /feedback/:id/translate.
+type TranslateFeedbackRequest struct {
+	Locale string `json:"locale"`
+}
+
+// TranslateFeedbackResponse is a feedback's text in Locale. SameLanguage
+// means it was already written in Locale, so Title/Description are the
+// originals.
+type TranslateFeedbackResponse struct {
+	FeedbackTranslation
+	Locale       string `json:"locale"`
+	SourceLocale string `json:"source_locale"`
+	SameLanguage bool   `json:"same_language"`
 }
 
 // FeedbackContent is the author-editable part of a Feedback.
@@ -95,17 +122,19 @@ type FeedbackView struct {
 	LinkPath    string              `json:"link_path,omitempty"`
 	// LinkTitle is the linked recipe's title when LinkPath is a recipe page
 	// that still exists.
-	LinkTitle string     `json:"link_title,omitempty"`
-	Author    *UserView  `json:"author,omitempty"`
-	Status    string     `json:"status"`
-	VoteCount int        `json:"vote_count"`
-	Voted     bool       `json:"voted"`
-	Mine      bool       `json:"mine"`
-	Unread    bool       `json:"unread,omitempty"`
-	AdminSeen *bool      `json:"admin_seen,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+	LinkTitle string    `json:"link_title,omitempty"`
+	Author    *UserView `json:"author,omitempty"`
+	// SourceLocale is set once someone has translated this feedback.
+	SourceLocale string     `json:"source_locale,omitempty"`
+	Status       string     `json:"status"`
+	VoteCount    int        `json:"vote_count"`
+	Voted        bool       `json:"voted"`
+	Mine         bool       `json:"mine"`
+	Unread       bool       `json:"unread,omitempty"`
+	AdminSeen    *bool      `json:"admin_seen,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ClosedAt     *time.Time `json:"closed_at,omitempty"`
 }
 
 type ListFeedbackResponse struct {

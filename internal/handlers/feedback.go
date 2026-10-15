@@ -208,6 +208,20 @@ func (h *Handlers) MarkFeedbackSeen(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// TranslateFeedback is POST /feedback/:id/translate - public, run only when
+// a viewer asks for a translation.
+func (h *Handlers) TranslateFeedback(c echo.Context) error {
+	var body models.TranslateFeedbackRequest
+	if err := c.Bind(&body); err != nil {
+		return errorResponse(http.StatusBadRequest, err.Error(), nil, c)
+	}
+	translation, err := h.recipes.TranslateFeedback(c.Request().Context(), c.Param("id"), body.Locale)
+	if err != nil {
+		return recipeServiceError(err, c)
+	}
+	return c.JSON(http.StatusOK, translation)
+}
+
 // AdminListFeedback is GET /admin/feedback?tab=new|open|done|declined|all.
 func (h *Handlers) AdminListFeedback(c echo.Context) error {
 	limit, offset, err := parsePage(c, 20)

@@ -126,3 +126,31 @@ func TestReferencedPicturesIncludesFeedbackPhotos(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, references, "feedback-photo.jpg")
 }
+
+// TestFeedbackTranslationCache verifies a translation is cached, never stored
+// over text edited since it was read, and cleared by an edit.
+func TestFeedbackTranslationCache(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	author := insertTestUser(t, db, ctx, "feedback-translation-author")
+	id := createTestFeedback(t, ctx, db, models.Feedback{Type: models.FeedbackBug, Title: "Minuteur", Description: "Il ne sonne pas", Author: author})
+	original, err := db.GetFeedbackById(ctx, id)
+	require.NoError(t, err)
+
+	translation := &models.FeedbackTranslation{Title: "Timer", Description: "It doesn't ring"}
+	require.NoError(t, db.SetFeedbackTranslation(ctx, id, original.UpdatedAt, "fr", "en", translation))
+	got, err := db.GetFeedbackById(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "fr", got.SourceLocale)
+	assert.Equal(t, *translation, got.Translations["en"])
+
+	edited, err := db.UpdateFeedbackContent(ctx, id, models.FeedbackContent{Type: models.FeedbackBug, Title: "Minuteur muet", Description: "Il ne sonne jamais"})
+	require.NoError(t, err)
+	assert.Empty(t, edited.SourceLocale)
+	assert.Empty(t, edited.Translations)
+
+	require.NoError(t, db.SetFeedbackTranslation(ctx, id, original.UpdatedAt, "fr", "en", translation))
+	got, err = db.GetFeedbackById(ctx, id)
+	require.NoError(t, err)
+	assert.Empty(t, got.Translations, "a translation of the pre-edit text must not be stored")
+}

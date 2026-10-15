@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
 
 	mongorepo "recipes/internal/database/mongo"
@@ -30,6 +31,8 @@ var (
 	// ErrFeedbackClosed guards the actions only an open feedback allows:
 	// voting, and its author editing or deleting it.
 	ErrFeedbackClosed = errors.New("feedback is closed")
+	// ErrTranslationUnavailable means no translator is configured.
+	ErrTranslationUnavailable = errors.New("translation is unavailable")
 )
 
 // recipeLinkPattern matches a site path to a recipe page, e.g.
@@ -319,6 +322,65 @@ func (s *Service) SetFeedbackStatus(ctx context.Context, id, status string) (mod
 	return views[0], nil
 }
 
+// TranslateFeedback returns a feedback's title and description in locale,
+// one of the configured translation locales. Feedback is never translated
+// on write: this runs only when a viewer asks, and the result is cached on
+// the feedback until its author edits it.
+func (s *Service) TranslateFeedback(ctx context.Context, id, locale string) (models.TranslateFeedbackResponse, error) {
+	if s.translator == nil {
+		return models.TranslateFeedbackResponse{}, ErrTranslationUnavailable
+	}
+	locale, err := normalizeLocale(locale)
+	if err != nil {
+		return models.TranslateFeedbackResponse{}, err
+	}
+	if !slices.ContainsFunc(s.targetLocales, func(target string) bool { return sameLanguage(target, locale) }) {
+		return models.TranslateFeedbackResponse{}, fmt.Errorf("%w: unsupported locale %q", ErrInvalid, locale)
+	}
+	feedback, err := s.db.GetFeedbackById(ctx, id)
+	if err != nil {
+		return models.TranslateFeedbackResponse{}, feedbackError(err)
+	}
+	response := models.TranslateFeedbackResponse{Locale: locale, SourceLocale: feedback.SourceLocale}
+	if cached, ok := feedback.Translations[locale]; ok {
+		response.FeedbackTranslation = cached
+		return response, nil
+	}
+	if response.SourceLocale == "" {
+		if response.SourceLocale, err = s.translator.DetectLocale(feedback.Title + "\n" + feedback.Description); err != nil {
+			return models.TranslateFeedbackResponse{}, err
+		}
+	}
+	if sameLanguage(response.SourceLocale, locale) {
+		response.SameLanguage = true
+		response.FeedbackTranslation = models.FeedbackTranslation{Title: feedback.Title, Description: feedback.Description}
+		if err := s.db.SetFeedbackTranslation(ctx, id, feedback.UpdatedAt, response.SourceLocale, locale, nil); err != nil {
+			return models.TranslateFeedbackResponse{}, err
+		}
+		return response, nil
+	}
+	texts, err := s.translator.TranslateTexts([]string{feedback.Title, feedback.Description}, locale)
+	if err != nil {
+		return models.TranslateFeedbackResponse{}, err
+	}
+	if len(texts) != 2 {
+		return models.TranslateFeedbackResponse{}, fmt.Errorf("translator returned %d texts, want 2", len(texts))
+	}
+	response.FeedbackTranslation = models.FeedbackTranslation{Title: texts[0], Description: texts[1]}
+	if err := s.db.SetFeedbackTranslation(ctx, id, feedback.UpdatedAt, response.SourceLocale, locale, &response.FeedbackTranslation); err != nil {
+		return models.TranslateFeedbackResponse{}, err
+	}
+	return response, nil
+}
+
+// sameLanguage reports whether two BCP-47 tags share a base language, so
+// "fr" and "fr-CA" count as the same.
+func sameLanguage(a, b string) bool {
+	baseA, _ := language.Make(a).Base()
+	baseB, _ := language.Make(b).Base()
+	return baseA == baseB
+}
+
 // MarkFeedbackAdminSeen takes a feedback out of the admin "New" tab.
 func (s *Service) MarkFeedbackAdminSeen(ctx context.Context, id string) error {
 	return feedbackError(s.db.MarkFeedbackAdminSeen(ctx, id))
@@ -354,7 +416,7 @@ func (s *Service) feedbackViews(ctx context.Context, items []models.Feedback, vi
 		view := models.FeedbackView{
 			Id: item.Id, Type: item.Type, Title: item.Title, Description: item.Description,
 			Photos: item.Photos, LinkPath: item.LinkPath, Status: item.Status, VoteCount: item.VoteCount,
-			Mine: mine, Unread: mine && item.AuthorUnread,
+			Mine: mine, Unread: mine && item.AuthorUnread, SourceLocale: item.SourceLocale,
 			CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, ClosedAt: item.ClosedAt,
 		}
 		if view.Photos == nil {

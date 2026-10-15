@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"recipes/internal/models"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	mongodriver "go.mongodb.org/mongo-driver/mongo"
@@ -126,6 +127,7 @@ type Database interface {
 	SetFeedbackStatus(ctx context.Context, id, status string) (models.Feedback, error)
 	MarkFeedbackAdminSeen(ctx context.Context, id string) error
 	MarkFeedbackAuthorSeen(ctx context.Context, id, authorID string) error
+	SetFeedbackTranslation(ctx context.Context, id string, updatedAt time.Time, sourceLocale, locale string, translation *models.FeedbackTranslation) error
 
 	RawDatabase() *mongodriver.Database
 }
