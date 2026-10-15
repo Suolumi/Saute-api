@@ -1112,15 +1112,14 @@ func (s *Service) decorateVariationCounts(ctx context.Context, recipes []models.
 }
 
 // decorateRefTitles resolves ResolvedRefTitle on every recipe_ref ingredient
-// across recipes, fetching every referenced recipe's current title in one
-// batched lookup: RefLabel wins when the author set one, else the live title
-// (per Ingredient.ResolvedRefTitle's contract). Recipes are mutated in place.
+// across recipes to the referenced recipe's live title, fetching them all in
+// one batched lookup. Recipes are mutated in place.
 func (s *Service) decorateRefTitles(ctx context.Context, recipes []*models.Recipe) {
 	ids := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, recipe := range recipes {
 		for _, ingredient := range recipe.Ingredients {
-			if ingredient.RecipeRef == nil || ingredient.RefLabel != "" {
+			if ingredient.RecipeRef == nil {
 				continue
 			}
 			hex := ingredient.RecipeRef.Hex()
@@ -1143,10 +1142,6 @@ func (s *Service) decorateRefTitles(ctx context.Context, recipes []*models.Recip
 		for i := range recipe.Ingredients {
 			ingredient := &recipe.Ingredients[i]
 			if ingredient.RecipeRef == nil {
-				continue
-			}
-			if ingredient.RefLabel != "" {
-				ingredient.ResolvedRefTitle = ingredient.RefLabel
 				continue
 			}
 			ingredient.ResolvedRefTitle = titles[ingredient.RecipeRef.Hex()]

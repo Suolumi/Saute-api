@@ -479,9 +479,7 @@ func (t nutritionTotals) round1() nutritionTotals {
 }
 
 // nutritionUnitContext bundles the Toolbox unit list and ingredient-density
-// map computeRecipeNutrition needs on every call (including recursive ones
-// into a recipe_ref target) - fetched once per top-level GetRecipeNutrition
-// call rather than refetched at every recursion depth.
+// map computeRecipeNutrition needs to resolve quantities to grams.
 type nutritionUnitContext struct {
 	units                     []models.ToolboxUnit
 	toolboxDensityByNameLower map[string]float64
@@ -525,10 +523,7 @@ func (s *Service) GetRecipeNutrition(ctx context.Context, recipeID string, servi
 	}
 	unitCtx := nutritionUnitContext{units: units, toolboxDensityByNameLower: toolboxDensityByNameLower}
 
-	// Seeded with the recipe's own id: a (malformed) direct self-reference is
-	// caught the same way an indirect cycle is, by the same visited check.
-	visited := map[string]bool{recipeID: true}
-	totals, lines, matched := s.computeRecipeNutrition(ctx, recipe, unitCtx, visited)
+	totals, lines, matched := s.computeRecipeNutrition(ctx, recipe, unitCtx)
 
 	scaledLines := make([]models.IngredientNutrition, len(lines))
 	for i, line := range lines {
@@ -549,35 +544,15 @@ func (s *Service) GetRecipeNutrition(ctx context.Context, recipeID string, servi
 
 // computeRecipeNutrition sums recipe's ingredients at recipe's own base
 // servings (no ratio applied - GetRecipeNutrition scales the result once at
-// the end, including for a recipe_ref line's recursed-into contribution).
-// A recipe_ref ingredient recurses into the referenced recipe's own totals,
-// scaled by "how many batches" (the ingredient's Quantity, or 1 when unset -
-// see recipes.ts's getReferenceQuantity: a blank quantity means "use the
-// whole recipe") - but only when Unit doesn't name an actual weight/volume
-// unit, see computeRecipeRefLine. It counts as matched only if that
-// recursion itself matched anything - a reference to a recipe with zero
-// linkable ingredients contributes nothing, same as any other unresolvable
-// line. visited guards
-// against a reference cycle (should already be impossible via the write-time
-// guards in service.go, but this is what actually prevents infinite
-// recursion if one ever slips through): a recipe already on the current
-// path is treated as unmatched rather than recursed into again.
-func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Recipe, unitCtx nutritionUnitContext, visited map[string]bool) (nutritionTotals, []models.IngredientNutrition, int) {
+// the end). A recipe_ref ingredient is always left unmatched: its quantity
+// has no reliable conversion into a share of the referenced recipe.
+func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Recipe, unitCtx nutritionUnitContext) (nutritionTotals, []models.IngredientNutrition, int) {
 	var totals nutritionTotals
 	matched := 0
 	lines := make([]models.IngredientNutrition, len(recipe.Ingredients))
 
 	for i, ingredient := range recipe.Ingredients {
-		if ingredient.RecipeRef != nil {
-			line, ok := s.computeRecipeRefLine(ctx, ingredient, unitCtx, visited)
-			lines[i] = line
-			if ok {
-				matched++
-				totals = totals.addScaled(nutritionTotals{Kcal: line.Kcal, Protein: line.ProteinG, Carbs: line.CarbsG, Fat: line.FatG, Salt: line.SaltG, Sugar: line.SugarG}, 1)
-			}
-			continue
-		}
-		if strings.TrimSpace(ingredient.Name) == "" {
+		if ingredient.RecipeRef != nil || strings.TrimSpace(ingredient.Name) == "" {
 			continue
 		}
 		link, err := s.db.GetIngredientNutritionLinkByNameLower(ctx, strings.ToLower(ingredient.Name))
@@ -602,53 +577,6 @@ func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Reci
 		totals = totals.addScaled(nutritionTotals{Kcal: line.Kcal, Protein: line.ProteinG, Carbs: line.CarbsG, Fat: line.FatG, Salt: line.SaltG, Sugar: line.SugarG}, 1)
 	}
 	return totals, lines, matched
-}
-
-// computeRecipeRefLine resolves one recipe_ref ingredient's own contribution:
-// the referenced recipe's full nutrition (at its own base servings) times
-// how many batches this ingredient calls for. "Batches" is only a defined
-// reading of Quantity when Unit doesn't name an actual weight/volume unit
-// (blank, or free text like "batch"/"batches" that isn't a registered
-// ToolboxUnit) - a quantity given in a real weight or volume unit (e.g. "20g"
-// of a sauce sub-recipe) means a fraction of one batch, but nothing tracks a
-// recipe's total yield weight/volume to compute that fraction from, so
-// rather than silently reading "20g" as "20 batches" (wildly overcounting -
-// the referenced recipe's *entire* nutrition, ×20), that case is left
-// unmatched, same as any other quantity this feature can't resolve.
-func (s *Service) computeRecipeRefLine(ctx context.Context, ingredient models.Ingredient, unitCtx nutritionUnitContext, visited map[string]bool) (models.IngredientNutrition, bool) {
-	refID := ingredient.RecipeRef.Hex()
-	if visited[refID] {
-		return models.IngredientNutrition{}, false
-	}
-	if unitText := strings.TrimSpace(ingredient.Unit); unitText != "" {
-		if _, ok := s.resolveToolboxUnit(ctx, unitText, unitCtx.units); ok {
-			return models.IngredientNutrition{}, false
-		}
-	}
-	referenced, err := s.db.GetRecipeById(refID)
-	if err != nil {
-		return models.IngredientNutrition{}, false
-	}
-	batches := ingredient.Quantity
-	if batches <= 0 {
-		batches = 1
-	}
-
-	childVisited := make(map[string]bool, len(visited)+1)
-	for id := range visited {
-		childVisited[id] = true
-	}
-	childVisited[refID] = true
-
-	subTotals, _, subMatched := s.computeRecipeNutrition(ctx, referenced, unitCtx, childVisited)
-	if subMatched == 0 {
-		return models.IngredientNutrition{}, false
-	}
-	scaled := subTotals.scale(batches)
-	return models.IngredientNutrition{
-		Matched: true, Kcal: scaled.Kcal, ProteinG: scaled.Protein, CarbsG: scaled.Carbs,
-		FatG: scaled.Fat, SaltG: scaled.Salt, SugarG: scaled.Sugar,
-	}, true
 }
 
 // resolveIngredientGrams converts one ingredient's quantity to grams via its

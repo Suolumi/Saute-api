@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
@@ -393,8 +392,7 @@ func TestSubmitNutritionLinkSuggestionOverwritingAnExistingFieldRequiresReview(t
 }
 
 // sugarLinkedStore returns a fakeStore where "Sugar" resolves to a linked
-// NutritionIngredient at 400 kcal/100g - shared setup for the recipe_ref
-// recursion tests below, which vary only in the recipe graph.
+// NutritionIngredient at 400 kcal/100g.
 func sugarLinkedStore(recipesByID map[string]models.Recipe) *fakeStore {
 	gram := gramUnit()
 	sugarNutritionID := primitive.NewObjectID()
@@ -421,13 +419,16 @@ func sugarLinkedStore(recipesByID map[string]models.Recipe) *fakeStore {
 	}
 }
 
-func TestGetRecipeNutritionRecursesIntoRecipeRefScaledByBatches(t *testing.T) {
+func TestGetRecipeNutritionIgnoresRecipeRef(t *testing.T) {
 	subID := primitive.NewObjectID()
 	parentID := primitive.NewObjectID()
 	sub := models.Recipe{Id: &subID, Quantity: 1, Ingredients: []models.Ingredient{{Name: "Sugar", Quantity: 100, Unit: "g"}}}
 	parent := models.Recipe{
 		Id: &parentID, Quantity: 4,
-		Ingredients: []models.Ingredient{{RecipeRef: &subID, Quantity: 2}}, // 2 batches
+		Ingredients: []models.Ingredient{
+			{Name: "Sugar", Quantity: 50, Unit: "g"},
+			{RecipeRef: &subID, Quantity: 2},
+		},
 	}
 	store := sugarLinkedStore(map[string]models.Recipe{subID.Hex(): sub, parentID.Hex(): parent})
 	s := &Service{db: store}
@@ -436,148 +437,11 @@ func TestGetRecipeNutritionRecursesIntoRecipeRefScaledByBatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRecipeNutrition: %v", err)
 	}
-	// sub-recipe: 100g sugar -> 400 kcal. 2 batches -> 800 kcal.
-	if got.Kcal != 800 || got.MatchedCount != 1 || got.TotalCount != 1 {
-		t.Fatalf("got %+v, want kcal=800 matched=1 total=1", got)
+	// Only the 50g of sugar counts: 200 kcal. The sub-recipe contributes nothing.
+	if got.Kcal != 200 || got.MatchedCount != 1 || got.TotalCount != 2 {
+		t.Fatalf("got %+v, want kcal=200 matched=1 total=2", got)
 	}
-	if len(got.Ingredients) != 1 || !got.Ingredients[0].Matched || got.Ingredients[0].Kcal != 800 {
-		t.Fatalf("got ingredient line %+v, want matched/kcal=800", got.Ingredients)
-	}
-}
-
-func TestGetRecipeNutritionRecipeRefBlankQuantityMeansOneBatch(t *testing.T) {
-	subID := primitive.NewObjectID()
-	parentID := primitive.NewObjectID()
-	sub := models.Recipe{Id: &subID, Quantity: 1, Ingredients: []models.Ingredient{{Name: "Sugar", Quantity: 100, Unit: "g"}}}
-	parent := models.Recipe{Id: &parentID, Quantity: 4, Ingredients: []models.Ingredient{{RecipeRef: &subID}}} // no quantity set
-	store := sugarLinkedStore(map[string]models.Recipe{subID.Hex(): sub, parentID.Hex(): parent})
-	s := &Service{db: store}
-
-	got, err := s.GetRecipeNutrition(context.Background(), parentID.Hex(), 4)
-	if err != nil {
-		t.Fatalf("GetRecipeNutrition: %v", err)
-	}
-	if got.Kcal != 400 {
-		t.Fatalf("got kcal=%v, want 400 (a blank quantity means one batch, the whole referenced recipe)", got.Kcal)
-	}
-}
-
-func TestGetRecipeNutritionRecipeRefNonUnitTextStillMeansBatches(t *testing.T) {
-	subID := primitive.NewObjectID()
-	parentID := primitive.NewObjectID()
-	sub := models.Recipe{Id: &subID, Quantity: 1, Ingredients: []models.Ingredient{{Name: "Sugar", Quantity: 100, Unit: "g"}}}
-	parent := models.Recipe{
-		Id: &parentID, Quantity: 4,
-		Ingredients: []models.Ingredient{{RecipeRef: &subID, Quantity: 2, Unit: "batches"}}, // free text, not a registered unit
-	}
-	store := sugarLinkedStore(map[string]models.Recipe{subID.Hex(): sub, parentID.Hex(): parent})
-	s := &Service{db: store}
-
-	got, err := s.GetRecipeNutrition(context.Background(), parentID.Hex(), 4)
-	if err != nil {
-		t.Fatalf("GetRecipeNutrition: %v", err)
-	}
-	if got.Kcal != 800 || got.MatchedCount != 1 {
-		t.Fatalf("got %+v, want kcal=800 matched=1 (\"batches\" isn't a registered unit, so it still reads as a batch count)", got)
-	}
-}
-
-// TestGetRecipeNutritionRecipeRefWeightUnitIsNotReadAsBatches is the
-// regression case this behavior exists for: an author writing "20g of
-// sauce" means 20 grams of the finished sub-recipe, not 20 batches of it -
-// with no tracked total yield weight to convert 20g into a fraction of one
-// batch, the line must be left unmatched rather than misread as "20
-// batches" and multiply the sub-recipe's entire nutrition by 20.
-func TestGetRecipeNutritionRecipeRefWeightUnitIsNotReadAsBatches(t *testing.T) {
-	subID := primitive.NewObjectID()
-	parentID := primitive.NewObjectID()
-	sub := models.Recipe{Id: &subID, Quantity: 1, Ingredients: []models.Ingredient{{Name: "Sugar", Quantity: 100, Unit: "g"}}}
-	parent := models.Recipe{
-		Id: &parentID, Quantity: 4,
-		Ingredients: []models.Ingredient{{RecipeRef: &subID, Quantity: 20, Unit: "g"}}, // 20g of sauce, not 20 batches
-	}
-	store := sugarLinkedStore(map[string]models.Recipe{subID.Hex(): sub, parentID.Hex(): parent})
-	s := &Service{db: store}
-
-	got, err := s.GetRecipeNutrition(context.Background(), parentID.Hex(), 4)
-	if err != nil {
-		t.Fatalf("GetRecipeNutrition: %v", err)
-	}
-	if got.Kcal != 0 || got.MatchedCount != 0 || got.TotalCount != 1 {
-		t.Fatalf("got %+v, want kcal=0 matched=0 total=1 (a weight-unit quantity can't be read as a batch count, so it's left unmatched, not scaled ×20)", got)
-	}
-	if len(got.Ingredients) != 1 || got.Ingredients[0].Matched {
-		t.Fatalf("got ingredient line %+v, want unmatched", got.Ingredients)
-	}
-}
-
-func TestGetRecipeNutritionRecipeRefUnmatchedWhenSubRecipeHasNoMatches(t *testing.T) {
-	subID := primitive.NewObjectID()
-	parentID := primitive.NewObjectID()
-	sub := models.Recipe{Id: &subID, Quantity: 1, Ingredients: []models.Ingredient{{Name: "Mystery Powder", Quantity: 1}}} // unlinkable
-	parent := models.Recipe{Id: &parentID, Quantity: 4, Ingredients: []models.Ingredient{{RecipeRef: &subID, Quantity: 1}}}
-	store := sugarLinkedStore(map[string]models.Recipe{subID.Hex(): sub, parentID.Hex(): parent})
-	s := &Service{db: store}
-
-	got, err := s.GetRecipeNutrition(context.Background(), parentID.Hex(), 4)
-	if err != nil {
-		t.Fatalf("GetRecipeNutrition: %v", err)
-	}
-	if got.MatchedCount != 0 || got.Kcal != 0 {
-		t.Fatalf("got %+v, want matched=0 kcal=0: a reference to a recipe with nothing matched contributes nothing", got)
-	}
-}
-
-func TestGetRecipeNutritionRecipeRefDirectSelfReferenceDoesNotRecurseForever(t *testing.T) {
-	selfID := primitive.NewObjectID()
-	self := models.Recipe{Id: &selfID, Quantity: 1, Ingredients: []models.Ingredient{{RecipeRef: &selfID, Quantity: 1}}}
-	store := sugarLinkedStore(map[string]models.Recipe{selfID.Hex(): self})
-	s := &Service{db: store}
-
-	done := make(chan struct{})
-	var got models.RecipeNutrition
-	var err error
-	go func() {
-		got, err = s.GetRecipeNutrition(context.Background(), selfID.Hex(), 1)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("GetRecipeNutrition did not return - a self-reference recursed without terminating")
-	}
-	if err != nil {
-		t.Fatalf("GetRecipeNutrition: %v", err)
-	}
-	if got.MatchedCount != 0 || got.Kcal != 0 {
-		t.Fatalf("got %+v, want matched=0 kcal=0: a reference cycle is treated as unmatched", got)
-	}
-}
-
-func TestGetRecipeNutritionRecipeRefIndirectCycleDoesNotRecurseForever(t *testing.T) {
-	aID := primitive.NewObjectID()
-	bID := primitive.NewObjectID()
-	a := models.Recipe{Id: &aID, Quantity: 1, Ingredients: []models.Ingredient{{RecipeRef: &bID, Quantity: 1}}}
-	b := models.Recipe{Id: &bID, Quantity: 1, Ingredients: []models.Ingredient{{RecipeRef: &aID, Quantity: 1}}}
-	store := sugarLinkedStore(map[string]models.Recipe{aID.Hex(): a, bID.Hex(): b})
-	s := &Service{db: store}
-
-	done := make(chan struct{})
-	var got models.RecipeNutrition
-	var err error
-	go func() {
-		got, err = s.GetRecipeNutrition(context.Background(), aID.Hex(), 1)
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("GetRecipeNutrition did not return - an A->B->A cycle recursed without terminating")
-	}
-	if err != nil {
-		t.Fatalf("GetRecipeNutrition: %v", err)
-	}
-	if got.MatchedCount != 0 || got.Kcal != 0 {
-		t.Fatalf("got %+v, want matched=0 kcal=0: an indirect reference cycle is treated as unmatched", got)
+	if len(got.Ingredients) != 2 || got.Ingredients[1].Matched || got.Ingredients[1].Kcal != 0 {
+		t.Fatalf("got ingredient lines %+v, want the recipe_ref line unmatched with kcal=0", got.Ingredients)
 	}
 }

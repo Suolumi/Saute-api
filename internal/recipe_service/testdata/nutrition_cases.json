@@ -1,0 +1,532 @@
+{
+  "comment": "Shared nutrition cases: run by nutrition_fixtures_test.go here and by Saute-web's client-side port (src/lib/nutritionCompute.test.ts). This file is the source of truth; Saute-web keeps a synced copy (scripts/sync-nutrition-fixtures.mjs). Expected values are exactly what GetRecipeNutrition returns.",
+  "data": {
+    "units": [
+      {
+        "id": "000000000000000000000a01",
+        "name": "Gram",
+        "symbol": "g",
+        "kind": "weight",
+        "to_base": 1
+      },
+      {
+        "id": "000000000000000000000a02",
+        "name": "Kilogram",
+        "symbol": "kg",
+        "kind": "weight",
+        "to_base": 1000
+      },
+      {
+        "id": "000000000000000000000a03",
+        "name": "Cup",
+        "symbol": "cup",
+        "kind": "volume",
+        "to_base": 240
+      },
+      {
+        "id": "000000000000000000000a04",
+        "name": "Millilitre",
+        "symbol": "ml",
+        "kind": "volume",
+        "to_base": 1
+      }
+    ],
+    "toolbox_ingredients": [
+      {
+        "id": "000000000000000000000c01",
+        "name": "Butter",
+        "g_per_100ml": 91
+      }
+    ],
+    "unit_aliases": [
+      {
+        "id": "000000000000000000000d01",
+        "alias": "grammes",
+        "unit_id": "000000000000000000000a01"
+      }
+    ],
+    "links": [
+      {
+        "id": "000000000000000000000e01",
+        "name": "Flour",
+        "nutrition_id": "000000000000000000000f01"
+      },
+      {
+        "id": "000000000000000000000e02",
+        "name": "Milk",
+        "nutrition_id": "000000000000000000000f02",
+        "g_per_100ml": 103
+      },
+      {
+        "id": "000000000000000000000e03",
+        "name": "Egg",
+        "nutrition_id": "000000000000000000000f03",
+        "grams_per_unit": 50
+      },
+      {
+        "id": "000000000000000000000e04",
+        "name": "Sugar",
+        "nutrition_id": "000000000000000000000f04"
+      },
+      {
+        "id": "000000000000000000000e05",
+        "name": "Butter",
+        "nutrition_id": "000000000000000000000f05"
+      },
+      {
+        "id": "000000000000000000000e06",
+        "name": "Honey",
+        "nutrition_id": "000000000000000000000f04"
+      },
+      {
+        "id": "000000000000000000000e07",
+        "name": "Onion",
+        "nutrition_id": "000000000000000000000f04"
+      },
+      {
+        "id": "000000000000000000000e08",
+        "name": "Mystery",
+        "nutrition_id": "000000000000000000000f99"
+      }
+    ],
+    "foods": [
+      {
+        "id": "000000000000000000000f01",
+        "name": "Wheat flour",
+        "kcal_per_100g": 350,
+        "protein_g_per_100g": 10,
+        "carbs_g_per_100g": 70,
+        "fat_g_per_100g": 1,
+        "salt_g_per_100g": 0,
+        "sugar_g_per_100g": 0.5
+      },
+      {
+        "id": "000000000000000000000f02",
+        "name": "Whole milk",
+        "kcal_per_100g": 64,
+        "protein_g_per_100g": 3.3,
+        "carbs_g_per_100g": 4.8,
+        "fat_g_per_100g": 3.6,
+        "salt_g_per_100g": 0.1,
+        "sugar_g_per_100g": 4.8
+      },
+      {
+        "id": "000000000000000000000f03",
+        "name": "Egg, raw",
+        "kcal_per_100g": 143,
+        "protein_g_per_100g": 12.6,
+        "carbs_g_per_100g": 0.7,
+        "fat_g_per_100g": 9.5,
+        "salt_g_per_100g": 0.36,
+        "sugar_g_per_100g": 0.4
+      },
+      {
+        "id": "000000000000000000000f04",
+        "name": "White sugar",
+        "kcal_per_100g": 400,
+        "protein_g_per_100g": 0,
+        "carbs_g_per_100g": 100,
+        "fat_g_per_100g": 0,
+        "salt_g_per_100g": 0,
+        "sugar_g_per_100g": 100
+      },
+      {
+        "id": "000000000000000000000f05",
+        "name": "Butter",
+        "kcal_per_100g": 717,
+        "protein_g_per_100g": 0.9,
+        "carbs_g_per_100g": 0.1,
+        "fat_g_per_100g": 81,
+        "salt_g_per_100g": 0.02,
+        "sugar_g_per_100g": 0.1
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "weight unit, unlinked line, scaled up",
+      "recipe": {
+        "quantity": 4,
+        "ingredients": [
+          {
+            "name": "Flour",
+            "quantity": 200,
+            "unit": "g"
+          },
+          {
+            "name": "Salt",
+            "quantity": 1,
+            "unit": "pinch"
+          }
+        ]
+      },
+      "servings": 8,
+      "expected": {
+        "servings": 8,
+        "kcal": 1400,
+        "protein_g": 40,
+        "carbs_g": 280,
+        "fat_g": 4,
+        "salt_g": 0,
+        "sugar_g": 2,
+        "matched_count": 1,
+        "total_count": 2,
+        "ingredients": [
+          {
+            "matched": true,
+            "kcal": 1400,
+            "protein_g": 40,
+            "carbs_g": 280,
+            "fat_g": 4,
+            "salt_g": 0,
+            "sugar_g": 2
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "volume unit with link density, case-insensitive name and unit, scaled by 1.5",
+      "recipe": {
+        "quantity": 2,
+        "ingredients": [
+          {
+            "name": "MILK",
+            "quantity": 1,
+            "unit": "Cup"
+          },
+          {
+            "name": "flour",
+            "quantity": 0.25,
+            "unit": "KG"
+          }
+        ]
+      },
+      "servings": 3,
+      "expected": {
+        "servings": 3,
+        "kcal": 1549.8,
+        "protein_g": 49.7,
+        "carbs_g": 280.3,
+        "fat_g": 17.1,
+        "salt_g": 0.4,
+        "sugar_g": 19.7,
+        "matched_count": 2,
+        "total_count": 2,
+        "ingredients": [
+          {
+            "matched": true,
+            "kcal": 237.3,
+            "protein_g": 12.2,
+            "carbs_g": 17.8,
+            "fat_g": 13.3,
+            "salt_g": 0.4,
+            "sugar_g": 17.8
+          },
+          {
+            "matched": true,
+            "kcal": 1312.5,
+            "protein_g": 37.5,
+            "carbs_g": 262.5,
+            "fat_g": 3.8,
+            "salt_g": 0,
+            "sugar_g": 1.9
+          }
+        ]
+      }
+    },
+    {
+      "name": "toolbox density fallback, volume without any density, servings 0 means base",
+      "recipe": {
+        "quantity": 1,
+        "ingredients": [
+          {
+            "name": "Butter",
+            "quantity": 100,
+            "unit": "ml"
+          },
+          {
+            "name": "Honey",
+            "quantity": 2,
+            "unit": "cup"
+          }
+        ]
+      },
+      "servings": 0,
+      "expected": {
+        "servings": 1,
+        "kcal": 652.5,
+        "protein_g": 0.8,
+        "carbs_g": 0.1,
+        "fat_g": 73.7,
+        "salt_g": 0,
+        "sugar_g": 0.1,
+        "matched_count": 1,
+        "total_count": 2,
+        "ingredients": [
+          {
+            "matched": true,
+            "kcal": 652.5,
+            "protein_g": 0.8,
+            "carbs_g": 0.1,
+            "fat_g": 73.7,
+            "salt_g": 0,
+            "sugar_g": 0.1
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "count-based lines, unrecognized unit falls back to count, scaled down",
+      "recipe": {
+        "quantity": 4,
+        "ingredients": [
+          {
+            "name": "Egg",
+            "quantity": 3,
+            "unit": ""
+          },
+          {
+            "name": "Egg",
+            "quantity": 2,
+            "unit": "whole"
+          },
+          {
+            "name": "Onion",
+            "quantity": 1,
+            "unit": ""
+          }
+        ]
+      },
+      "servings": 2,
+      "expected": {
+        "servings": 2,
+        "kcal": 178.8,
+        "protein_g": 15.8,
+        "carbs_g": 0.9,
+        "fat_g": 11.9,
+        "salt_g": 0.5,
+        "sugar_g": 0.5,
+        "matched_count": 2,
+        "total_count": 3,
+        "ingredients": [
+          {
+            "matched": true,
+            "kcal": 107.3,
+            "protein_g": 9.5,
+            "carbs_g": 0.5,
+            "fat_g": 7.1,
+            "salt_g": 0.3,
+            "sugar_g": 0.3
+          },
+          {
+            "matched": true,
+            "kcal": 71.5,
+            "protein_g": 6.3,
+            "carbs_g": 0.4,
+            "fat_g": 4.8,
+            "salt_g": 0.2,
+            "sugar_g": 0.2
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "unit alias, padded unit, zero quantity, recipe reference, missing food, untrimmed name",
+      "recipe": {
+        "quantity": 2,
+        "ingredients": [
+          {
+            "name": "Sugar",
+            "quantity": 30,
+            "unit": "grammes"
+          },
+          {
+            "name": "Sugar",
+            "quantity": 12.5,
+            "unit": " g "
+          },
+          {
+            "name": "Sugar",
+            "quantity": 0,
+            "unit": "g"
+          },
+          {
+            "name": "",
+            "quantity": 2,
+            "unit": "",
+            "recipe_ref": "000000000000000000000b01"
+          },
+          {
+            "name": "Mystery",
+            "quantity": 100,
+            "unit": "g"
+          },
+          {
+            "name": "Flour ",
+            "quantity": 100,
+            "unit": "g"
+          }
+        ]
+      },
+      "servings": 2,
+      "expected": {
+        "servings": 2,
+        "kcal": 170,
+        "protein_g": 0,
+        "carbs_g": 42.5,
+        "fat_g": 0,
+        "salt_g": 0,
+        "sugar_g": 42.5,
+        "matched_count": 2,
+        "total_count": 6,
+        "ingredients": [
+          {
+            "matched": true,
+            "kcal": 120,
+            "protein_g": 0,
+            "carbs_g": 30,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 30
+          },
+          {
+            "matched": true,
+            "kcal": 50,
+            "protein_g": 0,
+            "carbs_g": 12.5,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 12.5
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "rounding of awkward ratios",
+      "recipe": {
+        "quantity": 3,
+        "ingredients": [
+          {
+            "name": "Egg",
+            "quantity": 1,
+            "unit": ""
+          },
+          {
+            "name": "Milk",
+            "quantity": 37,
+            "unit": "ml"
+          },
+          {
+            "name": "Butter",
+            "quantity": 13,
+            "unit": "g"
+          }
+        ]
+      },
+      "servings": 7,
+      "expected": {
+        "servings": 7,
+        "kcal": 441.2,
+        "protein_g": 17.9,
+        "carbs_g": 5.1,
+        "fat_g": 38.9,
+        "salt_g": 0.5,
+        "sugar_g": 4.8,
+        "matched_count": 3,
+        "total_count": 3,
+        "ingredients": [
+          {
+            "matched": true,
+            "kcal": 166.8,
+            "protein_g": 14.7,
+            "carbs_g": 0.8,
+            "fat_g": 11.1,
+            "salt_g": 0.4,
+            "sugar_g": 0.5
+          },
+          {
+            "matched": true,
+            "kcal": 56.9,
+            "protein_g": 2.9,
+            "carbs_g": 4.3,
+            "fat_g": 3.2,
+            "salt_g": 0.1,
+            "sugar_g": 4.3
+          },
+          {
+            "matched": true,
+            "kcal": 217.5,
+            "protein_g": 0.3,
+            "carbs_g": 0,
+            "fat_g": 24.6,
+            "salt_g": 0,
+            "sugar_g": 0
+          }
+        ]
+      }
+    }
+  ]
+}

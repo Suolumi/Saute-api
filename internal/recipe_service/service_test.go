@@ -1700,15 +1700,14 @@ func TestGetResolvesRefIngredientTitleWhenNoLabel(t *testing.T) {
 	}
 }
 
-func TestGetPrefersRefLabelOverLookup(t *testing.T) {
+func TestGetResolvesLiveTitleEvenWithRefLabel(t *testing.T) {
 	canonical := canonicalRecipe()
 	refID := primitive.NewObjectID()
 	canonical.Ingredients = []models.Ingredient{{RecipeRef: &refID, RefLabel: "the crust recipe"}}
 	store := &fakeStore{
 		getRecipeByIdFn: func(string) (models.Recipe, error) { return canonical, nil },
 		getRecipeTitlesFn: func(ids []string) (map[string]string, error) {
-			t.Fatal("GetRecipeTitles should not be called when RefLabel is set")
-			return nil, nil
+			return map[string]string{refID.Hex(): "Shortcrust Pastry"}, nil
 		},
 	}
 	s := &Service{db: store}
@@ -1717,8 +1716,8 @@ func TestGetPrefersRefLabelOverLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.Ingredients[0].ResolvedRefTitle != "the crust recipe" {
-		t.Fatalf("ResolvedRefTitle = %q, want %q", got.Ingredients[0].ResolvedRefTitle, "the crust recipe")
+	if got.Ingredients[0].ResolvedRefTitle != "Shortcrust Pastry" || got.Ingredients[0].RefLabel != "the crust recipe" {
+		t.Fatalf("got ResolvedRefTitle=%q RefLabel=%q, want the live title and the label kept apart", got.Ingredients[0].ResolvedRefTitle, got.Ingredients[0].RefLabel)
 	}
 }
 

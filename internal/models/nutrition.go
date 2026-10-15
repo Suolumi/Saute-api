@@ -175,8 +175,8 @@ type ListIngredientNutritionLinksResponse struct {
 // recipe's total, at the same index as the recipe's (canonical or
 // localized - translation preserves positional correspondence) Ingredients
 // array. Matched is false when this line didn't contribute (no link, no
-// quantity, no density, or - for a recipe_ref line - the referenced
-// recipe itself had nothing matched); its Kcal/etc. are 0 in that case, not
+// quantity, no density, or a recipe_ref line, which is never counted); its
+// Kcal/etc. are 0 in that case, not
 // omitted, so a client can zip this array against the ingredient list by
 // index without a presence check.
 type IngredientNutrition struct {

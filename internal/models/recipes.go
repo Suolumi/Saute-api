@@ -353,9 +353,10 @@ type Ingredient struct {
 	// recipe's live current title. Cleared server-side when RecipeRef is
 	// nil. Translated on write through the same pipeline as Name/Unit/Label.
 	RefLabel string `bson:"ref_label,omitempty" json:"ref_label,omitempty"`
-	// ResolvedRefTitle is decorated post-fetch only (never persisted) -
-	// RefLabel if the author set one, else the referenced recipe's live
-	// current title, resolved fresh on every read (same bson:"-" pattern as
+	// ResolvedRefTitle is decorated post-fetch only (never persisted) - the
+	// referenced recipe's live current title, even when RefLabel is set (so
+	// an editor that clears RefLabel can fall back to it without a reload),
+	// resolved fresh on every read (same bson:"-" pattern as
 	// Recipe.VariationCount) so a renamed sub-recipe shows correctly
 	// everywhere with no migration. Empty when RecipeRef is nil.
 	ResolvedRefTitle string `bson:"-" json:"resolved_ref_title,omitempty"`

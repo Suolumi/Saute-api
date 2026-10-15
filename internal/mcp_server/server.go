@@ -152,7 +152,11 @@ func ingredientOutputs(ingredients []models.Ingredient) []IngredientOutput {
 	for _, ingredient := range ingredients {
 		output := IngredientOutput{Name: ingredient.Name, Quantity: ingredient.Quantity, Unit: ingredient.Unit, Label: ingredient.Label}
 		if ingredient.RecipeRef != nil {
-			output.RecipeRef = &RecipeRefOutput{ID: ingredient.RecipeRef.Hex(), Title: ingredient.ResolvedRefTitle}
+			title := ingredient.RefLabel
+			if title == "" {
+				title = ingredient.ResolvedRefTitle
+			}
+			output.RecipeRef = &RecipeRefOutput{ID: ingredient.RecipeRef.Hex(), Title: title}
 		}
 		outputs = append(outputs, output)
 	}
