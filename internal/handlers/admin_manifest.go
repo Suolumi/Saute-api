@@ -277,7 +277,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 	},
 	{
 		ID: "admin.feedback.list", Method: "GET", Path: "/admin/feedback", Category: "feedback",
-		Label: "List feedback", Description: "Browse the feedback board's bug reports and ideas by tab: new (not yet opened by an admin), open, done, declined, or all.",
+		Label: "List feedback", Description: "Browse the feedback board's bug reports and ideas by tab: open, done, declined, or all; new (not yet opened by an admin) backs the unread count.",
 		Params: []models.AdminRouteParam{
 			{Name: "tab", In: "query", Type: "string", Label: "Tab"},
 			{Name: "limit", In: "query", Type: "int", Label: "Limit"},
@@ -294,7 +294,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 	},
 	{
 		ID: "admin.feedback.markSeen", Method: "POST", Path: "/admin/feedback/:id/seen", Category: "feedback",
-		Label: "Mark feedback seen", Description: "Take a feedback out of the admin \"New\" tab.",
+		Label: "Mark feedback seen", Description: "Mark a feedback as opened by an admin, taking it out of the unread count.",
 		Params: []models.AdminRouteParam{
 			{Name: "id", In: "path", Type: "string", Required: true, Label: "Feedback ID"},
 		},

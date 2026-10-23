@@ -249,7 +249,7 @@ func (h *Handlers) AdminSetFeedbackStatus(c echo.Context) error {
 }
 
 // AdminMarkFeedbackSeen is POST /admin/feedback/:id/seen - takes an item out
-// of the "New" tab.
+// of the unread count behind the admin badge.
 func (h *Handlers) AdminMarkFeedbackSeen(c echo.Context) error {
 	if err := h.recipes.MarkFeedbackAdminSeen(c.Request().Context(), c.Param("id")); err != nil {
 		return recipeServiceError(err, c)
