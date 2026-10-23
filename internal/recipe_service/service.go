@@ -293,6 +293,10 @@ func validateRecipe(recipe *models.RecipeDB) error {
 	if recipe.PreparationTime < 0 || recipe.CookingTime < 0 || recipe.RestingTime < 0 {
 		return fmt.Errorf("%w: recipe times cannot be negative", ErrInvalid)
 	}
+	if recipe.Category == models.Diy {
+		// DIY projects only have a preparation time.
+		recipe.CookingTime, recipe.RestingTime = 0, 0
+	}
 	if len(recipe.Ingredients) == 0 {
 		return fmt.Errorf("%w: at least one ingredient is required", ErrInvalid)
 	}

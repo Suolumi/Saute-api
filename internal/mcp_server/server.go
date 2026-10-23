@@ -80,8 +80,8 @@ type CreateInput struct {
 	Kind            models.RecipeKind     `json:"kind" jsonschema:"One of breakfast, starter, dish, side-dish, sauce, baking, snack, plate, dessert, or drink; required only when category is food, ignored for diy"`
 	Category        models.RecipeCategory `json:"category,omitempty" jsonschema:"One of food or diy; defaults to food when omitted. diy skips the kind requirement (course concept doesn't apply) and the website shows DIY-flavored terminology (materials instead of ingredients, etc.)"`
 	PreparationTime int                   `json:"preparation_time"`
-	CookingTime     int                   `json:"cooking_time"`
-	RestingTime     int                   `json:"resting_time"`
+	CookingTime     int                   `json:"cooking_time" jsonschema:"Ignored (stored as 0) for diy"`
+	RestingTime     int                   `json:"resting_time" jsonschema:"Ignored (stored as 0) for diy"`
 	Ingredients     []IngredientInput     `json:"ingredients"`
 	Steps           []models.Step         `json:"steps"`
 	Locale          string                `json:"locale,omitempty" jsonschema:"BCP 47 locale of the canonical recipe; detected when omitted"`
@@ -105,8 +105,8 @@ type UpdateInput struct {
 	Kind            *models.RecipeKind     `json:"kind,omitempty"`
 	Category        *models.RecipeCategory `json:"category,omitempty"`
 	PreparationTime *int                   `json:"preparation_time,omitempty"`
-	CookingTime     *int                   `json:"cooking_time,omitempty"`
-	RestingTime     *int                   `json:"resting_time,omitempty"`
+	CookingTime     *int                   `json:"cooking_time,omitempty" jsonschema:"Ignored (stored as 0) for diy"`
+	RestingTime     *int                   `json:"resting_time,omitempty" jsonschema:"Ignored (stored as 0) for diy"`
 	Ingredients     *[]IngredientInput     `json:"ingredients,omitempty"`
 	Steps           *[]models.Step         `json:"steps,omitempty"`
 	Locale          *string                `json:"locale,omitempty" jsonschema:"BCP 47 locale of the canonical recipe"`

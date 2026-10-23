@@ -908,6 +908,19 @@ func TestValidateRecipeTrimsIngredientLabel(t *testing.T) {
 	}
 }
 
+func TestValidateRecipeClearsDiyCookAndRestTime(t *testing.T) {
+	recipe := validRecipeDB([]models.Ingredient{{Name: "Lye"}})
+	recipe.Category = models.Diy
+	recipe.PreparationTime, recipe.CookingTime, recipe.RestingTime = 30, 10, 20
+
+	if err := validateRecipe(&recipe); err != nil {
+		t.Fatalf("validateRecipe: %v", err)
+	}
+	if recipe.PreparationTime != 30 || recipe.CookingTime != 0 || recipe.RestingTime != 0 {
+		t.Fatalf("times = %d/%d/%d, want 30/0/0", recipe.PreparationTime, recipe.CookingTime, recipe.RestingTime)
+	}
+}
+
 func TestValidateRecipeCanonicalizesLabelCasing(t *testing.T) {
 	recipe := validRecipeDB([]models.Ingredient{
 		{Name: "Flour", Label: "For the Dough"},
