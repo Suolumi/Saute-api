@@ -75,6 +75,11 @@ type fakeStore struct {
 
 	// feedback is the in-memory feedback collection (see feedback_test.go).
 	feedback map[string]models.Feedback
+
+	// tags, tagCounts and addedTags back the tag methods (see tags_test.go).
+	tags      map[string]models.RecipeTag
+	tagCounts map[string]int64
+	addedTags map[string][]string
 }
 
 func (f *fakeStore) CreateRecipe(authorID string, infos *models.CreateRecipe) (models.Recipe, error) {

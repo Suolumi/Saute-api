@@ -72,6 +72,10 @@ type GetRecipesRequest struct {
 	Popular     bool       `query:"popular,omitempty"`
 	Ingredients []string   `query:"ingredients,omitempty"`
 	Kind        RecipeKind `query:"kind,omitempty"`
+	// Tags keeps only recipes carrying every listed tag slug. On the
+	// family-collapsed listing a family matches when its root or any single
+	// variation carries all of them; see buildRecipeFilterPipeline.
+	Tags []string `query:"tags,omitempty"`
 	// Category, when "diy", lists only DIY recipes on the default/family-
 	// collapsed listing; when empty or "food", that listing excludes diy
 	// (see buildRecipeFilterPipeline - this is not a generic equality
@@ -140,6 +144,7 @@ type UpdateRecipeRequest struct {
 	RestingTime     *int            `bson:"resting_time,omitempty" json:"resting_time,omitempty"`
 	Ingredients     *[]Ingredient   `bson:"ingredients,omitempty" json:"ingredients,omitempty"`
 	Steps           *[]Step         `bson:"steps,omitempty" json:"steps,omitempty"`
+	Tags            *[]string       `bson:"tags,omitempty" json:"tags,omitempty"`
 	Locale          *string         `bson:"source_locale,omitempty" json:"locale,omitempty"`
 	KeepPictureIDs  *[]string       `bson:"-" json:"keep_picture_ids,omitempty"`
 }
@@ -188,6 +193,7 @@ type CreateRecipe struct {
 	RestingTime     int             `bson:"resting_time,omitempty" json:"resting_time"`
 	Ingredients     []Ingredient    `bson:"ingredients,omitempty" json:"ingredients"`
 	Steps           []Step          `bson:"steps,omitempty" json:"steps"`
+	Tags            []string        `bson:"tags,omitempty" json:"tags"`
 	Pictures        []RecipePicture `bson:"pictures,omitempty" json:"-"`
 	SourceLocale    string          `bson:"source_locale,omitempty" json:"locale,omitempty"`
 	SourceHash      string          `bson:"source_hash,omitempty" json:"-"`
@@ -215,6 +221,7 @@ type RecipeDB struct {
 	RestingTime     int                 `bson:"resting_time,omitempty" json:"resting_time"`
 	Ingredients     []Ingredient        `bson:"ingredients,omitempty" json:"ingredients"`
 	Steps           []Step              `bson:"steps,omitempty" json:"steps"`
+	Tags            []string            `bson:"tags,omitempty" json:"tags"`
 	Pictures        []RecipePicture     `bson:"pictures,omitempty" json:"pictures"`
 	SourceLocale    string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
 	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
@@ -238,6 +245,7 @@ type Recipe struct {
 	RestingTime     int                 `bson:"resting_time,omitempty" json:"resting_time"`
 	Ingredients     []Ingredient        `bson:"ingredients,omitempty" json:"ingredients"`
 	Steps           []Step              `bson:"steps,omitempty" json:"steps"`
+	Tags            []string            `bson:"tags,omitempty" json:"tags"`
 	// Pictures is the raw, unresolved picture list (as stored/written); it's
 	// not serialized directly (json:"-") - AddedBy is a bare user id, not
 	// display data. PictureOutputs, populated post-fetch, is what clients
@@ -247,6 +255,9 @@ type Recipe struct {
 	Locale       string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	SourceHash   string              `bson:"source_hash,omitempty" json:"-"`
 	VariationOf  *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
+	// TagMatches is only set by a tag-filtered family listing; see
+	// RecipePreview.TagMatches.
+	TagMatches []TagMatch `bson:"tag_matches,omitempty" json:"-"`
 	// Favorite, FavoriteCount, VariationCount and PictureOutputs are stamped
 	// on after fetch (see recipe_service.decorateFamilyFavorite/
 	// decorateVariationCount/decoratePictureContributors); they never come
@@ -278,6 +289,9 @@ func (r Recipe) MarshalJSON() ([]byte, error) {
 	if a.PictureOutputs == nil {
 		a.PictureOutputs = []PictureOutput{}
 	}
+	if a.Tags == nil {
+		a.Tags = []string{}
+	}
 	return json.Marshal(a)
 }
 
@@ -295,6 +309,7 @@ func (r *Recipe) ToRecipeDB() RecipeDB {
 		RestingTime:     r.RestingTime,
 		Ingredients:     r.Ingredients,
 		Steps:           r.Steps,
+		Tags:            r.Tags,
 		Pictures:        r.Pictures,
 		SourceLocale:    r.SourceLocale,
 		Locale:          r.Locale,
@@ -315,12 +330,16 @@ type RecipePreview struct {
 	Category        RecipeCategory      `bson:"category,omitempty" json:"category"`
 	Quantity        int                 `bson:"quantity,omitempty" json:"quantity"`
 	Pictures        []string            `bson:"pictures,omitempty" json:"pictures"`
+	Tags            []string            `bson:"tags,omitempty" json:"tags"`
 	SourceLocale    string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
 	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	VariationOf     *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
-	Favorite        bool                `bson:"-" json:"favorite"`
-	FavoriteCount   int64               `bson:"-" json:"favorite_count"`
-	VariationCount  int64               `bson:"-" json:"variation_count"`
+	// TagMatches lists the variations that satisfy a tag filter when the
+	// root itself doesn't, so the card can point to them.
+	TagMatches     []TagMatch `bson:"-" json:"tag_matches,omitempty"`
+	Favorite       bool       `bson:"-" json:"favorite"`
+	FavoriteCount  int64      `bson:"-" json:"favorite_count"`
+	VariationCount int64      `bson:"-" json:"variation_count"`
 }
 
 // MarshalJSON ensures `pictures` serializes as `[]` rather than `null`; see
@@ -330,6 +349,9 @@ func (r RecipePreview) MarshalJSON() ([]byte, error) {
 	a := alias(r)
 	if a.Pictures == nil {
 		a.Pictures = []string{}
+	}
+	if a.Tags == nil {
+		a.Tags = []string{}
 	}
 	return json.Marshal(a)
 }

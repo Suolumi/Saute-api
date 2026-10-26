@@ -276,6 +276,32 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		},
 	},
 	{
+		ID: "admin.tags.create", Method: "POST", Path: "/admin/tags", Category: "tags",
+		Label: "Create tag", Description: "Add a recipe tag. Also add categories (list of food/diy), implies (list of slugs) and labels (locale to label map) to the JSON body; blank locales are machine-translated. The Tags admin page does this with a form.",
+		Params: []models.AdminRouteParam{
+			{Name: "slug", In: "body", Type: "string", Required: true, Label: "Slug"},
+			{Name: "group", In: "body", Type: "string", Required: true, Label: "Group (diet or practical)"},
+			{Name: "source_locale", In: "body", Type: "string", Label: "Source locale"},
+		},
+	},
+	{
+		ID: "admin.tags.update", Method: "PUT", Path: "/admin/tags/:slug", Category: "tags",
+		Label: "Update tag", Description: "Overwrite a recipe tag; send its full categories, implies and labels in the JSON body too. Newly added implications are backfilled onto every recipe carrying the tag.",
+		Params: []models.AdminRouteParam{
+			{Name: "slug", In: "path", Type: "string", Required: true, Label: "Tag slug"},
+			{Name: "group", In: "body", Type: "string", Required: true, Label: "Group (diet or practical)"},
+			{Name: "source_locale", In: "body", Type: "string", Label: "Source locale"},
+		},
+	},
+	{
+		ID: "admin.tags.delete", Method: "DELETE", Path: "/admin/tags/:slug", Category: "tags",
+		Label: "Delete tag", Description: "Remove a recipe tag. Refused while any recipe carries it or another tag implies it.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "slug", In: "path", Type: "string", Required: true, Label: "Tag slug"},
+		},
+	},
+	{
 		ID: "admin.feedback.list", Method: "GET", Path: "/admin/feedback", Category: "feedback",
 		Label: "List feedback", Description: "Browse the feedback board's bug reports and ideas by tab: open, done, declined, or all; new (not yet opened by an admin) backs the unread count.",
 		Params: []models.AdminRouteParam{

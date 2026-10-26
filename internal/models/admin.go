@@ -42,8 +42,8 @@ type AdminRouteDescriptor struct {
 	Path   string `json:"path"`
 	Label  string `json:"label"`
 	// Category groups actions in the console's left-hand list: "users",
-	// "recipes", "translations", "toolbox", "nutrition", "feedback", or
-	// "system".
+	// "recipes", "translations", "toolbox", "nutrition", "tags", "feedback",
+	// or "system".
 	Category    string            `json:"category"`
 	Description string            `json:"description"`
 	Destructive bool              `json:"destructive"`

@@ -74,6 +74,12 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusNotFound, "Feedback not found", nil, c)
 	case errors.Is(err, recipe_service.ErrFeedbackClosed):
 		return errorResponse(http.StatusConflict, "Feedback is closed", nil, c)
+	case errors.Is(err, recipe_service.ErrTagNotFound):
+		return errorResponse(http.StatusNotFound, "Tag not found", nil, c)
+	case errors.Is(err, recipe_service.ErrTagExists):
+		return errorResponse(http.StatusConflict, "A tag with this slug already exists", nil, c)
+	case errors.Is(err, recipe_service.ErrTagInUse):
+		return errorResponse(http.StatusConflict, err.Error(), nil, c)
 	case errors.Is(err, recipe_service.ErrTranslationUnavailable):
 		return errorResponse(http.StatusServiceUnavailable, "Translation is unavailable", nil, c)
 	default:

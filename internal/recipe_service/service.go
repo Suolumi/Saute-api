@@ -208,6 +208,15 @@ type Store interface {
 	ListNutritionSuggestions(ctx context.Context, status string, limit, offset int64) ([]models.NutritionSuggestion, int64, error)
 	UpdateNutritionSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
 
+	ListRecipeTags(ctx context.Context) ([]models.RecipeTag, error)
+	GetRecipeTag(ctx context.Context, slug string) (models.RecipeTag, error)
+	CreateRecipeTag(ctx context.Context, tag models.RecipeTag) error
+	UpdateRecipeTag(ctx context.Context, tag models.RecipeTag) (models.RecipeTag, error)
+	DeleteRecipeTag(ctx context.Context, slug string) error
+	CountRecipesWithTag(ctx context.Context, slug string, categories []models.RecipeCategory) (int64, error)
+	AddTagsToRecipesWithTag(ctx context.Context, slug string, add []string) (int64, error)
+	FillRecipeTagLabel(ctx context.Context, slug, sourceLocale, sourceLabel, locale, label string) error
+
 	CreateFeedback(ctx context.Context, feedback models.Feedback) (models.Feedback, error)
 	GetFeedbackById(ctx context.Context, id string) (models.Feedback, error)
 	ListFeedback(ctx context.Context, params models.ListFeedbackParams) ([]models.Feedback, int64, error)
@@ -360,6 +369,9 @@ func sourceHash(recipe models.RecipeDB) string {
 	recipe.Locale = ""
 	recipe.SourceHash = ""
 	recipe.VariationOf = nil
+	// Tags aren't translated either, and an implication backfill rewrites
+	// them directly in the DB without recomputing this hash.
+	recipe.Tags = nil
 	// Pictures are structural, not translatable content (like VariationOf
 	// above): excluding them keeps a picture add/remove from invalidating an
 	// otherwise-current stored translation - see pickTranslation, which
@@ -492,7 +504,7 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 	recipeDB := models.RecipeDB{
 		Title: input.Title, Description: input.Description, Quantity: input.Quantity, Kind: input.Kind, Category: input.Category,
 		PreparationTime: input.PreparationTime, CookingTime: input.CookingTime, RestingTime: input.RestingTime,
-		Ingredients: input.Ingredients, Steps: input.Steps, SourceLocale: input.SourceLocale,
+		Ingredients: input.Ingredients, Steps: input.Steps, Tags: input.Tags, SourceLocale: input.SourceLocale,
 	}
 	var variationRootCategory models.RecipeCategory
 	if input.VariationOf != nil {
@@ -523,6 +535,9 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 		}
 	}
 	if err := validateRecipe(&recipeDB); err != nil {
+		return models.Recipe{}, err
+	}
+	if err := s.resolveRecipeTags(ctx, &recipeDB); err != nil {
 		return models.Recipe{}, err
 	}
 	if recipeDB.VariationOf != nil && recipeDB.Category != variationRootCategory {
@@ -665,6 +680,9 @@ func mergePatch(recipe models.Recipe, patch models.UpdateRecipeRequest, freshSte
 			}
 		}
 	}
+	if patch.Tags != nil {
+		merged.Tags = slices.Clone(*patch.Tags)
+	}
 	if patch.Locale != nil {
 		merged.SourceLocale = *patch.Locale
 	}
@@ -709,6 +727,9 @@ func (s *Service) Update(ctx context.Context, recipe models.Recipe, patch models
 		return models.Recipe{}, err
 	}
 	if err := validateRecipe(&merged); err != nil {
+		return models.Recipe{}, err
+	}
+	if err := s.resolveRecipeTags(ctx, &merged); err != nil {
 		return models.Recipe{}, err
 	}
 	if merged.VariationOf != nil {
@@ -1190,14 +1211,15 @@ func wantsTranslation(canonical models.Recipe, requested string) bool {
 
 // pickTranslation returns the stored translation when it matches the canonical's
 // source hash, otherwise the canonical recipe. Either way Locale is stamped with
-// what is actually being served. VariationOf always comes from canonical: it's a
-// structural relationship, not translatable content, and recipe_translations rows
-// never store it.
+// what is actually being served. VariationOf, Pictures and Tags always come from
+// canonical: they aren't translatable content, and a tag backfill only updates
+// the canonical recipe.
 func pickTranslation(canonical, translation models.Recipe, requested string, found bool) models.Recipe {
 	if found && translation.SourceHash != "" && translation.SourceHash == canonical.SourceHash {
 		translation.Locale = requested
 		translation.VariationOf = canonical.VariationOf
 		translation.Pictures = canonical.Pictures
+		translation.Tags = canonical.Tags
 		return translation
 	}
 	canonical.Locale = canonical.SourceLocale
@@ -1404,6 +1426,28 @@ func (s *Service) localizeBatch(ctx context.Context, documents []models.Recipe, 
 	return localized
 }
 
+// localizeTagMatches swaps each tag-match hint's title for its stored
+// translation, the same way the variation itself would be served.
+func (s *Service) localizeTagMatches(ctx context.Context, previews []models.RecipePreview, requested string) {
+	var matches []models.Recipe
+	for _, preview := range previews {
+		for _, match := range preview.TagMatches {
+			matches = append(matches, models.Recipe{Id: match.Id, Title: match.Title, SourceLocale: match.SourceLocale, SourceHash: match.SourceHash})
+		}
+	}
+	if len(matches) == 0 {
+		return
+	}
+	localized := s.localizeBatch(ctx, matches, requested)
+	i := 0
+	for p := range previews {
+		for m := range previews[p].TagMatches {
+			previews[p].TagMatches[m].Title = localized[i].Title
+			i++
+		}
+	}
+}
+
 func (s *Service) localizePreviews(ctx context.Context, documents []models.Recipe, requested string) []models.RecipePreview {
 	localized := s.localizeBatch(ctx, documents, requested)
 	previews := make([]models.RecipePreview, 0, len(localized))
@@ -1412,9 +1456,11 @@ func (s *Service) localizePreviews(ctx context.Context, documents []models.Recip
 			Id: recipe.Id, Title: recipe.Title, Description: recipe.Description, Author: recipe.Author,
 			PreparationTime: recipe.PreparationTime, CookingTime: recipe.CookingTime, RestingTime: recipe.RestingTime,
 			Kind: recipe.Kind, Category: recipe.Category, Quantity: recipe.Quantity, Pictures: pictureFilenames(recipe.Pictures),
-			SourceLocale: recipe.SourceLocale, Locale: recipe.Locale, VariationOf: recipe.VariationOf,
+			Tags: recipe.Tags, SourceLocale: recipe.SourceLocale, Locale: recipe.Locale, VariationOf: recipe.VariationOf,
+			TagMatches: recipe.TagMatches,
 		})
 	}
+	s.localizeTagMatches(ctx, previews, requested)
 	return previews
 }
 

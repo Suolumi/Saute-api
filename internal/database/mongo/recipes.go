@@ -188,16 +188,16 @@ func (c *Client) DeleteRecipeById(id string) (models.RecipeDB, error) {
 }
 
 // variationsLookupStage attaches each candidate's own variations (never its
-// root, never chained further) as a light `variations` array of {title,
-// ingredients} - just enough for the search cross-match below, not a full
-// recipe fetch.
+// root, never chained further) as a light `variations` array - just enough
+// for the search and tag cross-matches below, not a full recipe fetch.
 var variationsLookupStage = bson.D{{Key: "$lookup", Value: bson.D{
 	{Key: "from", Value: recipesCollection},
 	{Key: "localField", Value: "_id"},
 	{Key: "foreignField", Value: "variation_of"},
 	{Key: "as", Value: "variations"},
 	{Key: "pipeline", Value: mongo.Pipeline{{{Key: "$project", Value: bson.D{
-		{Key: "title", Value: 1}, {Key: "ingredients", Value: 1},
+		{Key: "title", Value: 1}, {Key: "ingredients", Value: 1}, {Key: "tags", Value: 1},
+		{Key: "source_locale", Value: 1}, {Key: "source_hash", Value: 1},
 	}}}}},
 }}}
 
@@ -222,6 +222,41 @@ func familyIngredientsAllStages(fieldPrefix string, patterns []interface{}) []bs
 		}}}}},
 		{{Key: "$match", Value: bson.D{{Key: "family_ingredient_names", Value: bson.M{"$all": patterns}}}}},
 		{{Key: "$unset", Value: "family_ingredient_names"}},
+	}
+}
+
+// familyTagsAllStages keeps a family when its root or any single variation
+// carries every tag (unlike familyIngredientsAllStages, never a union across
+// the family: a diet filter must be met by one recipe). When only variations
+// match, they're kept in "tag_matches" for the card's hint; it's empty when
+// the root itself matches.
+func familyTagsAllStages(tags []string) []bson.D {
+	literal := bson.D{{Key: "$literal", Value: tags}}
+	carriesAll := func(field string) bson.D {
+		return bson.D{{Key: "$setIsSubset", Value: bson.A{literal, bson.D{{Key: "$ifNull", Value: bson.A{field, bson.A{}}}}}}}
+	}
+	return []bson.D{
+		{{Key: "$addFields", Value: bson.D{
+			{Key: "tag_root_match", Value: carriesAll("$tags")},
+			{Key: "tag_matches", Value: bson.D{{Key: "$map", Value: bson.D{
+				{Key: "input", Value: bson.D{{Key: "$filter", Value: bson.D{
+					{Key: "input", Value: "$variations"},
+					{Key: "cond", Value: carriesAll("$$this.tags")},
+				}}}},
+				{Key: "in", Value: bson.D{
+					{Key: "_id", Value: "$$this._id"}, {Key: "title", Value: "$$this.title"},
+					{Key: "source_locale", Value: "$$this.source_locale"}, {Key: "source_hash", Value: "$$this.source_hash"},
+				}},
+			}}}},
+		}}},
+		{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{
+			bson.D{{Key: "tag_root_match", Value: true}},
+			bson.D{{Key: "tag_matches.0", Value: bson.D{{Key: "$exists", Value: true}}}},
+		}}}}},
+		{{Key: "$addFields", Value: bson.D{{Key: "tag_matches", Value: bson.D{{Key: "$cond", Value: bson.A{
+			"$tag_root_match", bson.A{}, "$tag_matches",
+		}}}}}}},
+		{{Key: "$unset", Value: "tag_root_match"}},
 	}
 }
 
@@ -424,6 +459,14 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 	}
 	if parameters.Kind != "" {
 		pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "kind", Value: primitive.Regex{Pattern: regexp.QuoteMeta(string(parameters.Kind)), Options: "i"}}}}})
+	}
+
+	if len(parameters.Tags) > 0 {
+		if isFamilyListing {
+			pipeline = append(pipeline, familyTagsAllStages(parameters.Tags)...)
+		} else {
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "tags", Value: bson.M{"$all": parameters.Tags}}}}})
+		}
 	}
 
 	if len(parameters.Ingredients) > 0 && parameters.SearchLocale == "" {

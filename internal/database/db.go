@@ -118,6 +118,15 @@ type Database interface {
 	UpdateNutritionSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
 	SeedNutritionDefaults(ctx context.Context) error
 
+	ListRecipeTags(ctx context.Context) ([]models.RecipeTag, error)
+	GetRecipeTag(ctx context.Context, slug string) (models.RecipeTag, error)
+	CreateRecipeTag(ctx context.Context, tag models.RecipeTag) error
+	UpdateRecipeTag(ctx context.Context, tag models.RecipeTag) (models.RecipeTag, error)
+	DeleteRecipeTag(ctx context.Context, slug string) error
+	CountRecipesWithTag(ctx context.Context, slug string, categories []models.RecipeCategory) (int64, error)
+	AddTagsToRecipesWithTag(ctx context.Context, slug string, add []string) (int64, error)
+	FillRecipeTagLabel(ctx context.Context, slug, sourceLocale, sourceLabel, locale, label string) error
+
 	CreateFeedback(ctx context.Context, feedback models.Feedback) (models.Feedback, error)
 	GetFeedbackById(ctx context.Context, id string) (models.Feedback, error)
 	ListFeedback(ctx context.Context, params models.ListFeedbackParams) ([]models.Feedback, int64, error)

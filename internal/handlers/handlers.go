@@ -252,6 +252,9 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.POST("/unit-aliases", h.AdminCreateUnitAlias, authLimiter)
 	adminRouter.PUT("/unit-aliases/:id", h.AdminUpdateUnitAlias, authLimiter)
 	adminRouter.DELETE("/unit-aliases/:id", h.AdminDeleteUnitAlias, authLimiter)
+	adminRouter.POST("/tags", h.AdminCreateTag, authLimiter)
+	adminRouter.PUT("/tags/:slug", h.AdminUpdateTag, authLimiter)
+	adminRouter.DELETE("/tags/:slug", h.AdminDeleteTag, authLimiter)
 	adminRouter.GET("/feedback", h.AdminListFeedback)
 	adminRouter.POST("/feedback/:id/status", h.AdminSetFeedbackStatus, authLimiter)
 	adminRouter.POST("/feedback/:id/seen", h.AdminMarkFeedbackSeen)
@@ -276,6 +279,9 @@ func (h *Handlers) RegisterEndpoints() {
 
 	// Recipes images
 	unprotectedRouter.Static("/recipe-pictures", h.cfg.RecipeImageDir)
+
+	// Tag routes
+	unprotectedRouter.GET("/tags", h.ListTags)
 
 	// Toolbox routes
 	unprotectedRouter.GET("/toolbox/ingredients", h.ListToolboxIngredients)

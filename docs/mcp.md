@@ -56,6 +56,9 @@ Token validation is stateless apart from checking that the user still exists and
 - `create_recipe`: requires a complete recipe. `category` (`food` or `diy`) is optional and defaults to `food`; `kind` is required for `food` and ignored for `diy`. Pictures cannot be uploaded through this tool, at the recipe level or per step; attach them via the website. Any `picture` sent on a step is ignored.
 - `update_recipe`: requires `recipe_id`; all other recipe fields are true patch fields. Optional `keep_picture_ids` gives the ordered existing pictures to retain, or removes them all with an empty list. New pictures cannot be uploaded through this tool, at the recipe level or per step; attach them via the website. A step's `picture` may only be left empty or set to a filename that already belongs to one of the recipe's existing steps (i.e. keep or reassign an existing step picture) — any other value is rejected.
 
+- `list_tags`: accepts optional `locale`. Returns every recipe tag: its `slug`, a `label` in that locale, its `group` (`diet` or `practical`), the `categories` it applies to, and the tags it `implies`.
+- `tags` on `create_recipe` / `update_recipe` is a list of tag slugs (on update it replaces the recipe's tags). Implied tags are added automatically (a `vegan` recipe also gets `vegetarian`). An unknown slug, or one that doesn't apply to the recipe's category, is rejected with the list of valid slugs. `tags` on `search_recipes` keeps a family when its root or one single variation carries every listed tag.
+
 There is intentionally no MCP delete tool. Recipe deletion remains available through the website/REST API.
 
 MCP tool calls carry structured JSON, which makes uploading binary picture data through them impractical (it has to be inlined as base64), so picture attachment is REST/website-only — see below.
