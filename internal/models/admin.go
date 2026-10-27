@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // AdminStats backs GET /admin/system/stats.
 type AdminStats struct {
 	TotalUsers        int64            `json:"total_users"`
@@ -46,4 +48,39 @@ type AdminRouteDescriptor struct {
 	Description string            `json:"description"`
 	Destructive bool              `json:"destructive"`
 	Params      []AdminRouteParam `json:"params"`
+}
+
+// AdminMailRequest backs POST /admin/mails/preview and /admin/mails/broadcast:
+// the content of an announcement sent with the Sauté mail template.
+type AdminMailRequest struct {
+	Subject     string `json:"subject"`
+	Heading     string `json:"heading"`
+	Message     string `json:"message"`
+	ButtonLabel string `json:"button_label,omitempty"`
+	ButtonURL   string `json:"button_url,omitempty"`
+	// TestOnly sends the mail to the calling admin only.
+	TestOnly bool `json:"test_only,omitempty"`
+}
+
+// AdminMailPreview backs POST /admin/mails/preview.
+type AdminMailPreview struct {
+	HTML string `json:"html"`
+}
+
+// MailBroadcastFailure is one recipient a broadcast could not reach.
+type MailBroadcastFailure struct {
+	Email string `json:"email"`
+	Error string `json:"error"`
+}
+
+// MailBroadcastStatus backs GET /admin/mails/broadcast: the progress of the
+// running broadcast, or the outcome of the last one.
+type MailBroadcastStatus struct {
+	Running    bool                   `json:"running"`
+	Subject    string                 `json:"subject,omitempty"`
+	Total      int                    `json:"total"`
+	Sent       int                    `json:"sent"`
+	Failed     []MailBroadcastFailure `json:"failed"`
+	StartedAt  *time.Time             `json:"started_at,omitempty"`
+	FinishedAt *time.Time             `json:"finished_at,omitempty"`
 }

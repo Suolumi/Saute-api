@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{SUBJECT}}</title>
+    <style>
+        /* Reset styles for email clients */
+        body, table, td, p, a, li, blockquote {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+        table, td {
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+        img {
+            -ms-interpolation-mode: bicubic;
+            border: 0;
+            height: auto;
+            line-height: 100%;
+            outline: none;
+            text-decoration: none;
+        }
+
+        /* Main styles */
+        body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background-color: #f8faf8;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #ffffff;
+            font-size: 28px;
+            font-weight: 700;
+            margin: 0;
+            letter-spacing: -0.5px;
+        }
+
+        .header p {
+            color: #d1fae5;
+            font-size: 16px;
+            margin: 8px 0 0 0;
+        }
+
+        .content {
+            padding: 40px 30px;
+        }
+
+
+
+        .main-text {
+            color: #374151;
+            font-size: 18px;
+            line-height: 1.6;
+            margin: 0 0 24px 0;
+        }
+
+        .description {
+            color: #6b7280;
+            font-size: 16px;
+            line-height: 1.6;
+            margin: 0 0 32px 0;
+        }
+
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            padding: 16px 32px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            text-align: center;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            transition: all 0.2s ease;
+        }
+
+        .cta-button:hover {
+            background: linear-gradient(135deg, #047857 0%, #065f46 100%);
+        }
+
+        .button-container {
+            text-align: center;
+            margin: 32px 0;
+        }
+
+
+
+
+        .footer {
+            background-color: #f9fafb;
+            padding: 30px;
+            text-align: center;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .footer p {
+            color: #6b7280;
+            font-size: 14px;
+            line-height: 1.5;
+            margin: 0 0 8px 0;
+        }
+
+        .footer a {
+            color: #059669;
+            text-decoration: none;
+        }
+
+
+        /* Responsive styles */
+        @media only screen and (max-width: 600px) {
+            .email-container {
+                width: 100% !important;
+            }
+            .header, .content, .footer {
+                padding: 30px 20px !important;
+            }
+            .header h1 {
+                font-size: 24px !important;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="email-container">
+    <!-- Header -->
+    <div class="header">
+        <h1>Sauté</h1>
+        <p>{{HEADING}}</p>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+        <p class="main-text">Hei {{USER_NAME}}!</p>
+
+        {{MESSAGE}}
+
+        {{BUTTON}}
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <p>This email was sent to {{USER_EMAIL}} because you have a Sauté account.</p>
+    </div>
+</div>
+</body>
+</html>

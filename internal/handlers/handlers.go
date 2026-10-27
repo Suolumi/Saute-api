@@ -38,6 +38,8 @@ type Handlers struct {
 	recipes *recipe_service.Service
 	mcpAuth *mcp_server.Authenticator
 	mcp     *mcp_server.Server
+
+	broadcast mailBroadcaster
 }
 
 func New(cfg *config.Config) (*Handlers, error) {
@@ -253,6 +255,9 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.GET("/feedback", h.AdminListFeedback)
 	adminRouter.POST("/feedback/:id/status", h.AdminSetFeedbackStatus, authLimiter)
 	adminRouter.POST("/feedback/:id/seen", h.AdminMarkFeedbackSeen)
+	adminRouter.POST("/mails/preview", h.AdminPreviewMail, middleware.BodyLimit("1M"))
+	adminRouter.POST("/mails/broadcast", h.AdminSendMail, middleware.BodyLimit("1M"), authLimiter)
+	adminRouter.GET("/mails/broadcast", h.AdminMailBroadcastStatus)
 
 	// Recipes routes
 	unprotectedRouter.GET("/recipes", h.GetRecipes)

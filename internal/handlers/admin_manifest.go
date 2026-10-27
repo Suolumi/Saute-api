@@ -307,4 +307,32 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 			{Name: "id", In: "path", Type: "string", Required: true, Label: "Feedback ID"},
 		},
 	},
+	{
+		ID: "admin.mails.preview", Method: "POST", Path: "/admin/mails/preview", Category: "system",
+		Label: "Preview announcement mail", Description: "Render an announcement with the Sauté mail template, as you would receive it.",
+		Params: []models.AdminRouteParam{
+			{Name: "subject", In: "body", Type: "string", Required: true, Label: "Subject"},
+			{Name: "heading", In: "body", Type: "string", Required: true, Label: "Heading"},
+			{Name: "message", In: "body", Type: "string", Required: true, Label: "Message (blank line = new paragraph)"},
+			{Name: "button_label", In: "body", Type: "string", Label: "Button label"},
+			{Name: "button_url", In: "body", Type: "string", Label: "Button URL"},
+		},
+	},
+	{
+		ID: "admin.mails.broadcast", Method: "POST", Path: "/admin/mails/broadcast", Category: "system",
+		Label: "Send announcement mail", Description: "Send an announcement to every user in the background, or only to yourself with test_only. One broadcast at a time.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "subject", In: "body", Type: "string", Required: true, Label: "Subject"},
+			{Name: "heading", In: "body", Type: "string", Required: true, Label: "Heading"},
+			{Name: "message", In: "body", Type: "string", Required: true, Label: "Message (blank line = new paragraph)"},
+			{Name: "button_label", In: "body", Type: "string", Label: "Button label"},
+			{Name: "button_url", In: "body", Type: "string", Label: "Button URL"},
+			{Name: "test_only", In: "body", Type: "bool", Label: "Send only to me"},
+		},
+	},
+	{
+		ID: "admin.mails.broadcastStatus", Method: "GET", Path: "/admin/mails/broadcast", Category: "system",
+		Label: "Announcement mail status", Description: "Progress of the running announcement broadcast, or the outcome of the last one since the API started.",
+	},
 }
