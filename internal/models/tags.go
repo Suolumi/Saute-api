@@ -22,7 +22,8 @@ var TagGroups = []TagGroup{TagGroupDiet, TagGroupPractical}
 // the tag applies to. Implies lists tags a recipe carrying this one always
 // carries too (vegan implies vegetarian); recipes store the expanded set.
 // Labels holds one display label per locale; locales left blank are filled by
-// machine translation of the SourceLocale label.
+// machine translation of the SourceLocale label. Icon is an optional Lucide
+// icon name the site shows next to the label.
 type RecipeTag struct {
 	Slug         string            `bson:"_id" json:"slug"`
 	Group        TagGroup          `bson:"group" json:"group"`
@@ -30,6 +31,7 @@ type RecipeTag struct {
 	Implies      []string          `bson:"implies" json:"implies"`
 	Labels       map[string]string `bson:"labels" json:"labels"`
 	SourceLocale string            `bson:"source_locale" json:"source_locale"`
+	Icon         string            `bson:"icon,omitempty" json:"icon,omitempty"`
 	CreatedAt    time.Time         `bson:"created_at" json:"created_at"`
 	// Label is Labels resolved for the request's locale, set only when one
 	// was asked for.
@@ -45,6 +47,7 @@ type RecipeTagRequest struct {
 	Implies      []string          `json:"implies"`
 	Labels       map[string]string `json:"labels"`
 	SourceLocale string            `json:"source_locale"`
+	Icon         string            `json:"icon"`
 }
 
 // SaveRecipeTagResponse is the admin create/update response. Backfilled counts

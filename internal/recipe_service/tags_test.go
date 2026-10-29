@@ -138,6 +138,7 @@ func TestCreateTagValidation(t *testing.T) {
 		"no label":         func(r *models.RecipeTagRequest) { r.Labels = map[string]string{"en": "  "} },
 		"unknown implies":  func(r *models.RecipeTagRequest) { r.Implies = []string{"keto"} },
 		"implies narrower": func(r *models.RecipeTagRequest) { r.Categories = bothCats; r.Implies = []string{"vegan"} },
+		"bad icon":         func(r *models.RecipeTagRequest) { r.Icon = "<svg>" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -155,6 +156,15 @@ func TestCreateTagValidation(t *testing.T) {
 		req.Slug = "vegan"
 		_, err := s.CreateTag(context.Background(), req)
 		assert.ErrorIs(t, err, ErrTagExists)
+	})
+
+	t.Run("icon is trimmed and kept", func(t *testing.T) {
+		s := &Service{db: &fakeStore{tags: dietTags()}}
+		req := valid()
+		req.Icon = " milk-off "
+		tag, err := s.CreateTag(context.Background(), req)
+		require.NoError(t, err)
+		assert.Equal(t, "milk-off", tag.Icon)
 	})
 
 	t.Run("source locale falls back to a labelled one", func(t *testing.T) {

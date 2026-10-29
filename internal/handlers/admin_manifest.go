@@ -282,6 +282,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 			{Name: "slug", In: "body", Type: "string", Required: true, Label: "Slug"},
 			{Name: "group", In: "body", Type: "string", Required: true, Label: "Group (diet or practical)"},
 			{Name: "source_locale", In: "body", Type: "string", Label: "Source locale"},
+			{Name: "icon", In: "body", Type: "string", Label: "Lucide icon name (optional)"},
 		},
 	},
 	{
@@ -291,6 +292,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 			{Name: "slug", In: "path", Type: "string", Required: true, Label: "Tag slug"},
 			{Name: "group", In: "body", Type: "string", Required: true, Label: "Group (diet or practical)"},
 			{Name: "source_locale", In: "body", Type: "string", Label: "Source locale"},
+			{Name: "icon", In: "body", Type: "string", Label: "Lucide icon name (optional)"},
 		},
 	},
 	{

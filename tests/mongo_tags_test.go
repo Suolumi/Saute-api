@@ -108,4 +108,13 @@ func TestRecipeTagStore(t *testing.T) {
 	stored, err := db.GetRecipeTag(ctx, "vegan")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"en": "Vegan", "fr": "Végan"}, stored.Labels)
+
+	stored.Icon = "vegan"
+	updated, err := db.UpdateRecipeTag(ctx, stored)
+	require.NoError(t, err)
+	assert.Equal(t, "vegan", updated.Icon)
+	stored.Icon = ""
+	updated, err = db.UpdateRecipeTag(ctx, stored)
+	require.NoError(t, err)
+	assert.Empty(t, updated.Icon, "a blank icon removes it")
 }

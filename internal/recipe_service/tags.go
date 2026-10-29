@@ -165,6 +165,10 @@ func (s *Service) buildTag(req models.RecipeTagRequest, existing *models.RecipeT
 			return models.RecipeTag{}, fmt.Errorf("%w: slug must be lowercase letters, digits and single hyphens", ErrInvalid)
 		}
 	}
+	tag.Icon = strings.TrimSpace(req.Icon)
+	if tag.Icon != "" && (len(tag.Icon) > maxTagLabelLength || !tagSlugPattern.MatchString(tag.Icon)) {
+		return models.RecipeTag{}, fmt.Errorf("%w: icon must be a Lucide icon name, e.g. wheat-off", ErrInvalid)
+	}
 	if !slices.Contains(models.TagGroups, tag.Group) {
 		return models.RecipeTag{}, fmt.Errorf("%w: invalid tag group", ErrInvalid)
 	}
