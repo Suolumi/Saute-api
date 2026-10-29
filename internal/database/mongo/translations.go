@@ -160,3 +160,52 @@ func (c *Client) GetTranslationsByRecipeIDs(ctx context.Context, ids []string, l
 	}
 	return result, nil
 }
+
+// ListRecipeTranslationStates returns, for every canonical recipe that has a
+// source hash, the source hash each of its stored translations was made from.
+func (c *Client) ListRecipeTranslationStates(ctx context.Context) ([]models.RecipeTranslationState, error) {
+	cursor, err := c.db.Collection(recipesCollection).Aggregate(ctx, mongo.Pipeline{
+		{{Key: "$match", Value: bson.D{{Key: "source_hash", Value: bson.D{{Key: "$nin", Value: bson.A{nil, ""}}}}}}},
+		{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: translationsCollection},
+			{Key: "localField", Value: "_id"},
+			{Key: "foreignField", Value: "recipe_id"},
+			{Key: "as", Value: "translations"},
+		}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "source_locale", Value: 1},
+			{Key: "source_hash", Value: 1},
+			{Key: "translations.locale", Value: 1},
+			{Key: "translations.source_hash", Value: 1},
+		}}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		ID           primitive.ObjectID `bson:"_id"`
+		SourceLocale string             `bson:"source_locale"`
+		SourceHash   string             `bson:"source_hash"`
+		Translations []struct {
+			Locale     string `bson:"locale"`
+			SourceHash string `bson:"source_hash"`
+		} `bson:"translations"`
+	}
+	if err := cursor.All(ctx, &rows); err != nil {
+		return nil, err
+	}
+	states := make([]models.RecipeTranslationState, 0, len(rows))
+	for _, row := range rows {
+		state := models.RecipeTranslationState{
+			ID:           row.ID,
+			SourceLocale: row.SourceLocale,
+			SourceHash:   row.SourceHash,
+			Translations: make(map[string]string, len(row.Translations)),
+		}
+		for _, translation := range row.Translations {
+			state.Translations[translation.Locale] = translation.SourceHash
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}

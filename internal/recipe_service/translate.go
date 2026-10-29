@@ -3,6 +3,8 @@ package recipe_service
 import (
 	"context"
 	"errors"
+	"log"
+	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -124,4 +126,80 @@ func (s *Service) RetranslateLocale(ctx context.Context, recipeID, locale string
 	s.translateSlots <- struct{}{}
 	defer func() { <-s.translateSlots }()
 	return s.translateLocale(canonical, locale, true)
+}
+
+// BackfillTranslations translates, in the background, whatever a configured
+// target locale is still missing: recipes without a current translation row,
+// tags with a blank label, toolbox entries without a translation. Once
+// everything is translated it does nothing, so it runs on every startup; it
+// also retries translations that failed on write.
+func (s *Service) BackfillTranslations(ctx context.Context) {
+	if !s.canTranslate() {
+		return
+	}
+	s.backfillToolboxTranslations(ctx)
+	if tags, err := s.db.ListRecipeTags(ctx); err != nil {
+		utils.LogError("backfill tag labels", err)
+	} else {
+		for _, tag := range tags {
+			s.scheduleTagLabelTranslation(tag)
+		}
+	}
+	states, err := s.db.ListRecipeTranslationStates(ctx)
+	if err != nil {
+		utils.LogError("backfill recipe translations", err)
+		return
+	}
+	go s.backfillRecipeTranslations(states)
+}
+
+// missingRecipeLocales lists the target locales state has no current
+// translation for.
+func missingRecipeLocales(state models.RecipeTranslationState, targets []string) []string {
+	var missing []string
+	for _, locale := range targetLocalesFor(state.SourceLocale, targets) {
+		if state.Translations[locale] != state.SourceHash {
+			missing = append(missing, locale)
+		}
+	}
+	return missing
+}
+
+func (s *Service) backfillRecipeTranslations(states []models.RecipeTranslationState) {
+	type job struct {
+		id      string
+		locales []string
+	}
+	jobs := make(chan job)
+	var wg sync.WaitGroup
+	for range translateConcurrency {
+		wg.Go(func() {
+			for j := range jobs {
+				canonical, err := s.db.GetRecipeById(j.id)
+				if err != nil {
+					utils.LogError("backfill recipe translations", err, "recipe", j.id)
+					continue
+				}
+				s.translateSlots <- struct{}{}
+				for _, locale := range j.locales {
+					if err := s.translateLocale(canonical, locale, true); err != nil {
+						utils.LogError("backfill recipe translation", err, "recipe", j.id, "locale", locale)
+					}
+				}
+				<-s.translateSlots
+			}
+		})
+	}
+	queued := 0
+	for _, state := range states {
+		if missing := missingRecipeLocales(state, s.targetLocales); len(missing) > 0 {
+			jobs <- job{id: state.ID.Hex(), locales: missing}
+			queued++
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	if queued > 0 {
+		log.Printf("backfilled translations for %d recipe(s)", queued)
+	}
 }

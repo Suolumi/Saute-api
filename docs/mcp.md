@@ -67,7 +67,7 @@ Recipes must have a nonblank title, quantity of at least one, nonnegative times,
 
 ## Localization
 
-`list_my_recipes` and `get_my_recipe` accept only one locale. Translations are produced when a recipe is created or updated, never on read: the stored translation is returned when it is current (its source hash still matches the canonical recipe), otherwise the canonical recipe is returned. The returned `locale` and `source_locale` say what was actually served. A just-created or just-edited recipe is translated by a background worker, so its non-source locales briefly fall back to canonical until that completes; an admin can force a retranslate via `POST /api/v1/recipes/{id}/retranslate`.
+`list_my_recipes` and `get_my_recipe` accept only one locale. Translations are produced when a recipe is created or updated, never on read: the stored translation is returned when it is current (its source hash still matches the canonical recipe), otherwise the canonical recipe is returned. The returned `locale` and `source_locale` say what was actually served. A just-created or just-edited recipe is translated by a background worker, so its non-source locales briefly fall back to canonical until that completes; an admin can force a retranslate via `POST /api/v1/recipes/{id}/retranslate`. On startup, the API also translates in the background any recipe still missing a current translation for a configured locale.
 
 ## REST picture creation/update
 

@@ -33,6 +33,7 @@ type Database interface {
 	GetRecipeByIdForAuthor(ctx context.Context, id, authorID string) (models.Recipe, error)
 	GetRecipeByIdLocale(id string, locale string) (models.Recipe, error)
 	GetTranslationsByRecipeIDs(ctx context.Context, ids []string, locale string) (map[string]models.Recipe, error)
+	ListRecipeTranslationStates(ctx context.Context) ([]models.RecipeTranslationState, error)
 	ReferencedPictures(ctx context.Context) (map[string]struct{}, error)
 	UpdateRecipeById(id string, recipe *models.UpdateRecipeRequest) (models.Recipe, error)
 	ReplaceRecipeById(ctx context.Context, id string, recipe models.RecipeDB) (models.Recipe, error)

@@ -11,10 +11,11 @@ func TestParseLocales(t *testing.T) {
 		raw  string
 		want []string
 	}{
-		{"default", "en,fr,fi", []string{"en", "fr", "fi"}},
+		{"default", "en,fr,fi,zh", []string{"en", "fr", "fi", "zh"}},
 		{"spaces and blanks", " en , , fr ,", []string{"en", "fr"}},
 		{"duplicates collapse", "en,en,fr", []string{"en", "fr"}},
 		{"normalized", "EN-us,FR", []string{"en-US", "fr"}},
+		{"simplified chinese collapses", "zh-CN,zh-Hans,zh", []string{"zh"}},
 		{"empty disables", "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -130,6 +130,7 @@ type Store interface {
 	GetRecipeDocumentsBoosted(ctx context.Context, userID string, parameters models.GetRecipesRequest) (favorited, rest []models.Recipe, total int64, err error)
 	GetRecipesByAuthor(ctx context.Context, authorID, cursor string, limit int) ([]models.Recipe, int64, error)
 	GetTranslationsByRecipeIDs(ctx context.Context, ids []string, locale string) (map[string]models.Recipe, error)
+	ListRecipeTranslationStates(ctx context.Context) ([]models.RecipeTranslationState, error)
 	AddLocaleRecipe(recipe models.Recipe, locale string) (models.Recipe, error)
 	DeleteRecipeById(id string) (models.RecipeDB, error)
 	DeleteLocalizedRecipesByID(ctx context.Context, id string) error
@@ -267,15 +268,11 @@ func (s *Service) canTranslate() bool {
 }
 
 func normalizeLocale(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", nil
-	}
-	tag, err := language.Parse(value)
-	if err != nil || tag == language.Und {
+	locale, err := utils.ParseLocale(value)
+	if err != nil {
 		return "", fmt.Errorf("%w: invalid locale", ErrInvalid)
 	}
-	return tag.String(), nil
+	return locale, nil
 }
 
 func validateRecipe(recipe *models.RecipeDB) error {

@@ -111,10 +111,9 @@ func New(cfg *config.Config) (*Handlers, error) {
 	if err != nil {
 		return nil, err
 	}
-	// SeedToolboxDefaults above runs before the translator/service exist, so
-	// it can't translate what it inserts - catch up now, one-shot per
-	// startup (a no-op once every entry already has a SourceLocale).
-	recipeService.EnsureToolboxTranslations(startupCtx)
+	// Covers what SeedToolboxDefaults inserted (it runs before the
+	// translator exists) and any newly configured target locale.
+	recipeService.BackfillTranslations(startupCtx)
 
 	mcpAuth := mcp_server.NewAuthenticator(db, cfg.MCP.JWTSecret, cfg.MCP.TokenExpiration)
 	mcpServer, err := mcp_server.New(cfg.MCP, recipeService, mcpAuth.Verifier())

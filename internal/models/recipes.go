@@ -390,3 +390,12 @@ type Step struct {
 	Picture      string `bson:"picture,omitempty" json:"picture,omitempty" jsonschema:"Filename of an existing picture already attached to one of this recipe's steps, or empty. New pictures cannot be uploaded through MCP; attach photos via the website."`
 	TimerMinutes int    `bson:"timer_minutes,omitempty" json:"timer_minutes,omitempty" jsonschema:"Optional countdown timer for this step, in minutes (e.g. 30 for a 30-minute simmer). 0 or omitted means no timer."`
 }
+
+// RecipeTranslationState is a canonical recipe's source hash next to the
+// source hash each stored translation was made from, keyed by locale.
+type RecipeTranslationState struct {
+	ID           primitive.ObjectID
+	SourceLocale string
+	SourceHash   string
+	Translations map[string]string
+}

@@ -350,21 +350,30 @@ type ciqualSeedRow struct {
 // SeedNutritionDefaults inserts the imported Ciqual reference list the first
 // time the collection is empty - idempotent, safe to call on every startup,
 // same posture as SeedToolboxDefaults. It never touches a non-empty
-// collection, so admin edits/deletions are never undone.
-// IngredientNutritionLink/UnitAlias/NutritionSuggestion all start empty and
-// grow only from user suggestions - no seed data for them.
+// collection beyond filling translated names it lacks (see fillCiqualNames),
+// so admin edits/deletions are never undone. It also adds the default unit
+// aliases (see seedDefaultUnitAliases). IngredientNutritionLink and
+// NutritionSuggestion start empty and grow only from user suggestions.
 func (c *Client) SeedNutritionDefaults(ctx context.Context) error {
-	count, err := c.db.Collection(nutritionIngredientsCollection).CountDocuments(ctx, bson.D{})
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
 	var rows []ciqualSeedRow
 	if err := json.Unmarshal(nutritionCiqualSeed, &rows); err != nil {
 		return fmt.Errorf("parse embedded nutrition seed data: %w", err)
 	}
+	count, err := c.db.Collection(nutritionIngredientsCollection).CountDocuments(ctx, bson.D{})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		if err := c.insertCiqualRows(ctx, rows); err != nil {
+			return err
+		}
+	} else if err := c.fillCiqualNames(ctx, rows); err != nil {
+		return err
+	}
+	return c.seedDefaultUnitAliases(ctx)
+}
+
+func (c *Client) insertCiqualRows(ctx context.Context, rows []ciqualSeedRow) error {
 	now := time.Now().UTC()
 	docs := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
@@ -383,6 +392,99 @@ func (c *Client) SeedNutritionDefaults(ctx context.Context) error {
 		end := min(i+batchSize, len(docs))
 		if _, err := collection.InsertMany(ctx, docs[i:end]); err != nil {
 			return fmt.Errorf("insert nutrition seed batch: %w", err)
+		}
+	}
+	return nil
+}
+
+// fillCiqualNames sets each seed row's translated names on the stored entry
+// with the same name, for locales whose name is still blank there. Lets a
+// locale added to the seed reach a database seeded before it, without
+// overwriting an admin's edit.
+func (c *Client) fillCiqualNames(ctx context.Context, rows []ciqualSeedRow) error {
+	seedNames := make(map[string]map[string]string) // locale -> name_lower -> name
+	for _, row := range rows {
+		for locale, name := range row.Names {
+			if seedNames[locale] == nil {
+				seedNames[locale] = make(map[string]string)
+			}
+			seedNames[locale][strings.ToLower(row.Name)] = name
+		}
+	}
+	collection := c.db.Collection(nutritionIngredientsCollection)
+	for locale, byName := range seedNames {
+		field := "names." + locale
+		cursor, err := collection.Find(ctx,
+			bson.D{{Key: field, Value: bson.D{{Key: "$in", Value: bson.A{nil, ""}}}}},
+			options.Find().SetProjection(bson.D{{Key: "name_lower", Value: 1}}))
+		if err != nil {
+			return err
+		}
+		var blanks []struct {
+			ID        primitive.ObjectID `bson:"_id"`
+			NameLower string             `bson:"name_lower"`
+		}
+		if err := cursor.All(ctx, &blanks); err != nil {
+			return err
+		}
+		var updates []mongo.WriteModel
+		for _, blank := range blanks {
+			if name, ok := byName[blank.NameLower]; ok {
+				updates = append(updates, mongo.NewUpdateOneModel().
+					SetFilter(bson.D{{Key: "_id", Value: blank.ID}}).
+					SetUpdate(bson.D{{Key: "$set", Value: bson.D{{Key: field, Value: name}}}}))
+			}
+		}
+		if len(updates) == 0 {
+			continue
+		}
+		if _, err := collection.BulkWrite(ctx, updates, options.BulkWrite().SetOrdered(false)); err != nil {
+			return fmt.Errorf("fill nutrition names for %s: %w", locale, err)
+		}
+	}
+	return nil
+}
+
+// defaultUnitAliases maps unit spellings the Toolbox units' own names and
+// symbols don't cover to the name of the unit they mean.
+var defaultUnitAliases = []struct{ alias, unitName string }{
+	{"克", "Gram"}, {"公克", "Gram"},
+	{"千克", "Kilogram"}, {"公斤", "Kilogram"},
+	{"盎司", "Ounce"}, {"磅", "Pound"},
+	{"毫升", "Milliliter"}, {"厘升", "Centiliter"}, {"升", "Liter"}, {"公升", "Liter"},
+	{"杯", "Cup"},
+	{"汤匙", "Tablespoon"}, {"大勺", "Tablespoon"}, {"大匙", "Tablespoon"},
+	{"茶匙", "Teaspoon"}, {"小勺", "Teaspoon"}, {"小匙", "Teaspoon"},
+}
+
+// seedDefaultUnitAliases inserts each default alias that doesn't exist yet,
+// skipping any whose unit is gone. An existing alias is left alone, even if
+// an admin pointed it at another unit.
+func (c *Client) seedDefaultUnitAliases(ctx context.Context) error {
+	units, err := c.ListToolboxUnits(ctx)
+	if err != nil {
+		return err
+	}
+	unitIDs := make(map[string]primitive.ObjectID, len(units))
+	for _, unit := range units {
+		if unit.Id != nil {
+			unitIDs[unit.NameLower] = *unit.Id
+		}
+	}
+	collection := c.db.Collection(unitAliasesCollection)
+	now := time.Now().UTC()
+	for _, d := range defaultUnitAliases {
+		unitID, ok := unitIDs[strings.ToLower(d.unitName)]
+		if !ok {
+			continue
+		}
+		aliasLower := strings.ToLower(d.alias)
+		_, err := collection.UpdateOne(ctx,
+			bson.D{{Key: "alias_lower", Value: aliasLower}},
+			bson.D{{Key: "$setOnInsert", Value: models.UnitAlias{Alias: d.alias, AliasLower: aliasLower, UnitID: unitID, CreatedAt: now}}},
+			options.Update().SetUpsert(true))
+		if err != nil && !mongo.IsDuplicateKeyError(err) {
+			return fmt.Errorf("seed unit alias %q: %w", d.alias, err)
 		}
 	}
 	return nil

@@ -250,30 +250,43 @@ func (s *Service) translateToolboxEntry(kind string, id primitive.ObjectID) erro
 	}
 }
 
-// EnsureToolboxTranslations schedules translation for every ingredient/unit
-// entry that predates translate-on-write, i.e. has no SourceLocale yet -
-// covers the starter set SeedToolboxDefaults inserts, which runs before the
-// translator is constructed and so can't translate inline. Safe to call on
-// every startup: an entry that already has a SourceLocale is skipped, so a
-// restart doesn't re-translate (and re-spend API quota on) entries already
-// handled. Substitutions never get seed data (see SeedToolboxDefaults), so
-// there's nothing to backfill there - every one already went through
-// scheduleToolboxTranslation at creation.
-func (s *Service) EnsureToolboxTranslations(ctx context.Context) {
-	if !s.canTranslate() {
-		return
+// toolboxNeedsTranslation reports whether an entry has never been translated
+// (no SourceLocale yet, e.g. seeded before the translator existed) or lacks a
+// translation for one of targets.
+func toolboxNeedsTranslation[T any](sourceLocale string, translations map[string]T, targets []string) bool {
+	if sourceLocale == "" {
+		return true
 	}
+	for _, locale := range targetLocalesFor(sourceLocale, targets) {
+		if _, ok := translations[locale]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+// backfillToolboxTranslations schedules translation for every toolbox entry
+// toolboxNeedsTranslation flags. Retranslating rebuilds the entry's whole
+// map, which is cheap at the toolbox's size.
+func (s *Service) backfillToolboxTranslations(ctx context.Context) {
 	if ingredients, err := s.db.ListToolboxIngredients(ctx); err == nil {
-		for _, ingredient := range ingredients {
-			if ingredient.SourceLocale == "" && ingredient.Id != nil {
-				s.scheduleToolboxTranslation(models.ToolboxSuggestionIngredient, *ingredient.Id)
+		for _, item := range ingredients {
+			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
+				s.scheduleToolboxTranslation(models.ToolboxSuggestionIngredient, *item.Id)
 			}
 		}
 	}
 	if units, err := s.db.ListToolboxUnits(ctx); err == nil {
-		for _, unit := range units {
-			if unit.SourceLocale == "" && unit.Id != nil {
-				s.scheduleToolboxTranslation(models.ToolboxSuggestionUnit, *unit.Id)
+		for _, item := range units {
+			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
+				s.scheduleToolboxTranslation(models.ToolboxSuggestionUnit, *item.Id)
+			}
+		}
+	}
+	if substitutions, err := s.db.ListToolboxSubstitutions(ctx); err == nil {
+		for _, item := range substitutions {
+			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
+				s.scheduleToolboxTranslation(models.ToolboxSuggestionSubstitution, *item.Id)
 			}
 		}
 	}

@@ -517,11 +517,7 @@ func (s *Service) GetRecipeNutrition(ctx context.Context, recipeID string, servi
 	if err != nil {
 		return models.RecipeNutrition{}, err
 	}
-	toolboxDensityByNameLower := make(map[string]float64, len(toolboxIngredients))
-	for _, ti := range toolboxIngredients {
-		toolboxDensityByNameLower[ti.NameLower] = ti.GPer100ml
-	}
-	unitCtx := nutritionUnitContext{units: units, toolboxDensityByNameLower: toolboxDensityByNameLower}
+	unitCtx := nutritionUnitContext{units: units, toolboxDensityByNameLower: toolboxDensityByName(toolboxIngredients, recipe.SourceLocale)}
 
 	totals, lines, matched := s.computeRecipeNutrition(ctx, recipe, unitCtx)
 
@@ -540,6 +536,25 @@ func (s *Service) GetRecipeNutrition(ctx context.Context, recipeID string, servi
 		FatG: scaledTotals.Fat, SaltG: scaledTotals.Salt, SugarG: scaledTotals.Sugar,
 		MatchedCount: matched, TotalCount: len(recipe.Ingredients), Ingredients: scaledLines,
 	}, nil
+}
+
+// toolboxDensityByName maps each Toolbox ingredient's lowercased source name,
+// then its name translated into sourceLocale, to its density. A recipe
+// written in Chinese then finds the density of "Milk" under "牛奶".
+func toolboxDensityByName(items []models.ToolboxIngredient, sourceLocale string) map[string]float64 {
+	densities := make(map[string]float64, len(items))
+	for _, ti := range items {
+		if _, ok := densities[ti.NameLower]; !ok {
+			densities[ti.NameLower] = ti.GPer100ml
+		}
+	}
+	for _, ti := range items {
+		key := strings.ToLower(ti.Translations[sourceLocale].Name)
+		if _, ok := densities[key]; key != "" && !ok {
+			densities[key] = ti.GPer100ml
+		}
+	}
+	return densities
 }
 
 // computeRecipeNutrition sums recipe's ingredients at recipe's own base

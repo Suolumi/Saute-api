@@ -8,8 +8,6 @@ import (
 	"recipes/internal/utils"
 	"strings"
 	"time"
-
-	"golang.org/x/text/language"
 )
 
 type MCPConfig struct {
@@ -67,11 +65,10 @@ func parseLocales(raw string) ([]string, error) {
 		if part == "" {
 			continue
 		}
-		tag, err := language.Parse(part)
-		if err != nil || tag == language.Und {
+		normalized, err := utils.ParseLocale(part)
+		if err != nil {
 			return nil, fmt.Errorf("invalid locale %q", part)
 		}
-		normalized := tag.String()
 		if !seen[normalized] {
 			seen[normalized] = true
 			locales = append(locales, normalized)
@@ -112,7 +109,7 @@ func NewConfig(prefix ...string) (*Config, error) {
 		},
 		Translator: &translator.TranslatorConfig{
 			ApiKey:  "",
-			Locales: "en,fr,fi",
+			Locales: "en,fr,fi,zh",
 		},
 		MCP: &MCPConfig{
 			TokenExpiration:        365 * 24 * time.Hour,

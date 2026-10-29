@@ -23,32 +23,33 @@ import (
 // fakeStore satisfies Store; only the methods a test needs are wired, the rest
 // return zero values.
 type fakeStore struct {
-	getRecipeByIdLocaleFn       func(id, locale string) (models.Recipe, error)
-	addLocaleRecipeFn           func(recipe models.Recipe, locale string) (models.Recipe, error)
-	getRecipeByIdFn             func(id string) (models.Recipe, error)
-	getRecipeByIdLocale         int
-	getRecipeDocumentsFn        func(models.GetRecipesRequest) ([]models.Recipe, int64, error)
-	getRecipeDocumentsBoostedFn func(userID string, parameters models.GetRecipesRequest) ([]models.Recipe, []models.Recipe, int64, error)
-	getRecipeDocumentsBoosted   int
-	getFavoriteInfoFn           func(ids []string, userID string) (map[string]models.FavoriteInfo, error)
-	getFamilyFavoriteInfoFn     func(rootIDs []string, userID string) (map[string]models.FavoriteInfo, error)
-	deleteRecipeByIdFn          func(id string) (models.RecipeDB, error)
-	deleteRecipeById            int
-	createRecipeFn              func(authorID string, infos *models.CreateRecipe) (models.Recipe, error)
-	replaceRecipeByIdFn         func(id string, recipe models.RecipeDB) (models.Recipe, error)
-	getOldestVariationIDFn      func(rootID string) (*primitive.ObjectID, error)
-	repointVariationsFn         func(oldRootID, newRootID string) error
-	promoteRecipeToRootFn       func(id string) error
-	getVariationCountsFn        func(rootIDs []string) (map[string]int64, error)
-	setVariationOfFn            func(recipeID, rootID string) error
-	repointRecipeReferencesFn   func(oldRootID, newRootID string) error
-	hasIncomingReferencesFn     func(recipeID string) (bool, error)
-	familyReferencesRecipeFn    func(familyRootID, targetID string) (bool, error)
-	getRecipeTitlesFn           func(ids []string) (map[string]string, error)
-	getUsersByIDsFn             func(ids []string) (map[string]models.UserView, error)
-	listTranslationOverridesFn  func(recipeID, locale string) ([]models.TranslationOverride, error)
-	deleteTranslationOverrideFn func(id string) (models.TranslationOverride, error)
-	deleteOverridesByPrefixFn   func(recipeID, locale, prefix string) error
+	getRecipeByIdLocaleFn         func(id, locale string) (models.Recipe, error)
+	addLocaleRecipeFn             func(recipe models.Recipe, locale string) (models.Recipe, error)
+	getRecipeByIdFn               func(id string) (models.Recipe, error)
+	getRecipeByIdLocale           int
+	getRecipeDocumentsFn          func(models.GetRecipesRequest) ([]models.Recipe, int64, error)
+	getRecipeDocumentsBoostedFn   func(userID string, parameters models.GetRecipesRequest) ([]models.Recipe, []models.Recipe, int64, error)
+	getRecipeDocumentsBoosted     int
+	getFavoriteInfoFn             func(ids []string, userID string) (map[string]models.FavoriteInfo, error)
+	getFamilyFavoriteInfoFn       func(rootIDs []string, userID string) (map[string]models.FavoriteInfo, error)
+	deleteRecipeByIdFn            func(id string) (models.RecipeDB, error)
+	deleteRecipeById              int
+	createRecipeFn                func(authorID string, infos *models.CreateRecipe) (models.Recipe, error)
+	replaceRecipeByIdFn           func(id string, recipe models.RecipeDB) (models.Recipe, error)
+	getOldestVariationIDFn        func(rootID string) (*primitive.ObjectID, error)
+	repointVariationsFn           func(oldRootID, newRootID string) error
+	promoteRecipeToRootFn         func(id string) error
+	getVariationCountsFn          func(rootIDs []string) (map[string]int64, error)
+	setVariationOfFn              func(recipeID, rootID string) error
+	repointRecipeReferencesFn     func(oldRootID, newRootID string) error
+	hasIncomingReferencesFn       func(recipeID string) (bool, error)
+	familyReferencesRecipeFn      func(familyRootID, targetID string) (bool, error)
+	getRecipeTitlesFn             func(ids []string) (map[string]string, error)
+	getUsersByIDsFn               func(ids []string) (map[string]models.UserView, error)
+	listRecipeTranslationStatesFn func() ([]models.RecipeTranslationState, error)
+	listTranslationOverridesFn    func(recipeID, locale string) ([]models.TranslationOverride, error)
+	deleteTranslationOverrideFn   func(id string) (models.TranslationOverride, error)
+	deleteOverridesByPrefixFn     func(recipeID, locale, prefix string) error
 	// callOrder records, in order, the names of RepointVariations/
 	// PromoteRecipeToRoot/DeleteRecipeById calls - used to assert promotion
 	// happens strictly before the delete.
@@ -128,6 +129,12 @@ func (f *fakeStore) GetRecipesByAuthor(context.Context, string, string, int) ([]
 }
 func (f *fakeStore) GetTranslationsByRecipeIDs(context.Context, []string, string) (map[string]models.Recipe, error) {
 	return map[string]models.Recipe{}, nil
+}
+func (f *fakeStore) ListRecipeTranslationStates(context.Context) ([]models.RecipeTranslationState, error) {
+	if f.listRecipeTranslationStatesFn != nil {
+		return f.listRecipeTranslationStatesFn()
+	}
+	return nil, nil
 }
 func (f *fakeStore) AddLocaleRecipe(recipe models.Recipe, locale string) (models.Recipe, error) {
 	if f.addLocaleRecipeFn != nil {

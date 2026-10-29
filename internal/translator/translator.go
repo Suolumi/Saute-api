@@ -7,6 +7,7 @@ import (
 	"golang.org/x/text/language"
 	"google.golang.org/api/option"
 	"recipes/internal/models"
+	"recipes/internal/utils"
 	"strings"
 )
 
@@ -167,5 +168,5 @@ func (t *Translator) DetectLocale(text string) (string, error) {
 			highestIndex = i
 		}
 	}
-	return detected[0][highestIndex].Language.String(), nil
+	return utils.CanonicalLocale(detected[0][highestIndex].Language), nil
 }

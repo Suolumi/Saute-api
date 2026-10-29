@@ -3,6 +3,7 @@ package recipe_service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -443,5 +444,21 @@ func TestGetRecipeNutritionIgnoresRecipeRef(t *testing.T) {
 	}
 	if len(got.Ingredients) != 2 || got.Ingredients[1].Matched || got.Ingredients[1].Kcal != 0 {
 		t.Fatalf("got ingredient lines %+v, want the recipe_ref line unmatched with kcal=0", got.Ingredients)
+	}
+}
+
+func TestToolboxDensityByNameUsesSourceLocaleTranslation(t *testing.T) {
+	items := []models.ToolboxIngredient{
+		{Name: "Milk", NameLower: "milk", GPer100ml: 103, Translations: map[string]models.ToolboxIngredientTranslation{
+			"zh": {Name: "牛奶"}, "fr": {Name: "Lait"},
+		}},
+		{Name: "Honey", NameLower: "honey", GPer100ml: 142, Translations: map[string]models.ToolboxIngredientTranslation{
+			"zh": {Name: "Milk"},
+		}},
+	}
+	got := toolboxDensityByName(items, "zh")
+	want := map[string]float64{"milk": 103, "honey": 142, "牛奶": 103}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("toolboxDensityByName = %v, want %v", got, want)
 	}
 }
