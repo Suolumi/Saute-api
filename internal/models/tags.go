@@ -22,8 +22,9 @@ var TagGroups = []TagGroup{TagGroupDiet, TagGroupPractical}
 // the tag applies to. Implies lists tags a recipe carrying this one always
 // carries too (vegan implies vegetarian); recipes store the expanded set.
 // Labels holds one display label per locale; locales left blank are filled by
-// machine translation of the SourceLocale label. Icon is an optional Lucide
-// icon name the site shows next to the label.
+// machine translation of the SourceLocale label. Icon is the name of the icon
+// the site shows next to the label; required on write, but tags created before
+// it was may lack one.
 type RecipeTag struct {
 	Slug         string            `bson:"_id" json:"slug"`
 	Group        TagGroup          `bson:"group" json:"group"`

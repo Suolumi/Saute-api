@@ -127,7 +127,7 @@ func TestCreateTagValidation(t *testing.T) {
 	valid := func() models.RecipeTagRequest {
 		return models.RecipeTagRequest{
 			Slug: "dairy-free", Group: models.TagGroupDiet, Categories: foodOnly,
-			Labels: map[string]string{"en": "Dairy-free"}, SourceLocale: "en",
+			Labels: map[string]string{"en": "Dairy-free"}, SourceLocale: "en", Icon: "milk-off",
 		}
 	}
 	cases := map[string]func(*models.RecipeTagRequest){
@@ -139,6 +139,7 @@ func TestCreateTagValidation(t *testing.T) {
 		"unknown implies":  func(r *models.RecipeTagRequest) { r.Implies = []string{"keto"} },
 		"implies narrower": func(r *models.RecipeTagRequest) { r.Categories = bothCats; r.Implies = []string{"vegan"} },
 		"bad icon":         func(r *models.RecipeTagRequest) { r.Icon = "<svg>" },
+		"no icon":          func(r *models.RecipeTagRequest) { r.Icon = "  " },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -182,7 +183,7 @@ func TestCreateTagValidation(t *testing.T) {
 func TestUpdateTagRejectsCycle(t *testing.T) {
 	s := &Service{db: &fakeStore{tags: dietTags()}}
 	_, _, err := s.UpdateTag(context.Background(), "pescatarian", models.RecipeTagRequest{
-		Group: models.TagGroupDiet, Categories: foodOnly, Labels: map[string]string{"en": "Pescatarian"},
+		Group: models.TagGroupDiet, Categories: foodOnly, Labels: map[string]string{"en": "Pescatarian"}, Icon: "tag",
 		Implies: []string{"vegan"},
 	})
 	assert.ErrorIs(t, err, ErrInvalid)
@@ -195,7 +196,7 @@ func TestUpdateTagBackfillsOnlyNewImplications(t *testing.T) {
 	s := &Service{db: store}
 
 	_, backfilled, err := s.UpdateTag(context.Background(), "vegan", models.RecipeTagRequest{
-		Group: models.TagGroupDiet, Categories: foodOnly, Labels: map[string]string{"en": "Vegan"},
+		Group: models.TagGroupDiet, Categories: foodOnly, Labels: map[string]string{"en": "Vegan"}, Icon: "tag",
 		Implies: []string{"vegetarian", "dairy-free"},
 	})
 	require.NoError(t, err)
@@ -204,7 +205,7 @@ func TestUpdateTagBackfillsOnlyNewImplications(t *testing.T) {
 
 	store.addedTags = nil
 	_, _, err = s.UpdateTag(context.Background(), "vegan", models.RecipeTagRequest{
-		Group: models.TagGroupDiet, Categories: foodOnly, Labels: map[string]string{"en": "Vegan"},
+		Group: models.TagGroupDiet, Categories: foodOnly, Labels: map[string]string{"en": "Vegan"}, Icon: "tag",
 		Implies: []string{"dairy-free"},
 	})
 	require.NoError(t, err)
@@ -215,7 +216,7 @@ func TestUpdateTagRefusesDroppingUsedCategory(t *testing.T) {
 	store := &fakeStore{tags: dietTags(), tagCounts: map[string]int64{"budget": 1}}
 	s := &Service{db: store}
 	_, _, err := s.UpdateTag(context.Background(), "budget", models.RecipeTagRequest{
-		Group: models.TagGroupPractical, Categories: foodOnly, Labels: map[string]string{"en": "Budget"},
+		Group: models.TagGroupPractical, Categories: foodOnly, Labels: map[string]string{"en": "Budget"}, Icon: "tag",
 	})
 	assert.ErrorIs(t, err, ErrTagInUse)
 }

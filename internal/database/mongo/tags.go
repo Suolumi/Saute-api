@@ -46,19 +46,14 @@ func (c *Client) CreateRecipeTag(ctx context.Context, tag models.RecipeTag) erro
 }
 
 // UpdateRecipeTag overwrites every field of an existing tag except its slug
-// and creation time. A blank icon is removed.
+// and creation time.
 func (c *Client) UpdateRecipeTag(ctx context.Context, tag models.RecipeTag) (models.RecipeTag, error) {
 	set := bson.D{
 		{Key: "group", Value: tag.Group}, {Key: "categories", Value: tag.Categories},
 		{Key: "implies", Value: tag.Implies}, {Key: "labels", Value: tag.Labels},
-		{Key: "source_locale", Value: tag.SourceLocale},
+		{Key: "source_locale", Value: tag.SourceLocale}, {Key: "icon", Value: tag.Icon},
 	}
-	var update bson.D
-	if tag.Icon != "" {
-		update = bson.D{{Key: "$set", Value: append(set, bson.E{Key: "icon", Value: tag.Icon})}}
-	} else {
-		update = bson.D{{Key: "$set", Value: set}, {Key: "$unset", Value: bson.D{{Key: "icon", Value: ""}}}}
-	}
+	update := bson.D{{Key: "$set", Value: set}}
 	var updated models.RecipeTag
 	err := c.db.Collection(recipeTagsCollection).FindOneAndUpdate(ctx,
 		bson.D{{Key: "_id", Value: tag.Slug}}, update,

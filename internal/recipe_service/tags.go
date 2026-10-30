@@ -166,7 +166,10 @@ func (s *Service) buildTag(req models.RecipeTagRequest, existing *models.RecipeT
 		}
 	}
 	tag.Icon = strings.TrimSpace(req.Icon)
-	if tag.Icon != "" && (len(tag.Icon) > maxTagLabelLength || !tagSlugPattern.MatchString(tag.Icon)) {
+	if tag.Icon == "" {
+		return models.RecipeTag{}, fmt.Errorf("%w: a tag needs an icon", ErrInvalid)
+	}
+	if len(tag.Icon) > maxTagLabelLength || !tagSlugPattern.MatchString(tag.Icon) {
 		return models.RecipeTag{}, fmt.Errorf("%w: icon must be a Lucide icon name, e.g. wheat-off", ErrInvalid)
 	}
 	if !slices.Contains(models.TagGroups, tag.Group) {
