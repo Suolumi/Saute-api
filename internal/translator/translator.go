@@ -133,7 +133,7 @@ func (t *Translator) GetRecipeLocale(recipe models.Recipe) (string, error) {
 
 // TranslateTexts translates an arbitrary batch of short strings into to, in
 // one API call - used for content that isn't a whole Recipe, e.g. the
-// Toolbox's ingredient/unit/substitution entries.
+// Toolbox units.
 func (t *Translator) TranslateTexts(texts []string, to string) ([]string, error) {
 	baseTo := language.MustParse(to)
 	translations, err := t.client.Translate(context.TODO(), texts, baseTo, &translate.Options{

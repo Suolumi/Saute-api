@@ -3,7 +3,6 @@ package mongo
 import (
 	"context"
 	"errors"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,8 +15,7 @@ import (
 )
 
 const (
-	toolboxUnitsCollection         = "toolbox_units"
-	toolboxSubstitutionsCollection = "toolbox_substitutions"
+	toolboxUnitsCollection = "toolbox_units"
 )
 
 var ToolboxEntryNotFoundError = errors.New("toolbox entry not found")
@@ -147,105 +145,12 @@ func (c *Client) GetToolboxUnitByNameLower(ctx context.Context, nameLower string
 	return item, nil
 }
 
-// --- Substitutions ---
-
-func (c *Client) CreateToolboxSubstitution(ctx context.Context, problem, solution, tag string) (models.ToolboxSubstitution, error) {
-	entry := models.ToolboxSubstitution{Problem: problem, Solution: solution, Tag: tag, CreatedAt: time.Now().UTC()}
-	result, err := c.db.Collection(toolboxSubstitutionsCollection).InsertOne(ctx, entry)
-	if err != nil {
-		return models.ToolboxSubstitution{}, err
-	}
-	id := result.InsertedID.(primitive.ObjectID)
-	entry.Id = &id
-	return entry, nil
-}
-
-func (c *Client) UpdateToolboxSubstitution(ctx context.Context, id string, problem, solution, tag string) (models.ToolboxSubstitution, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return models.ToolboxSubstitution{}, ToolboxEntryNotFoundError
-	}
-	set := bson.D{{Key: "problem", Value: problem}, {Key: "solution", Value: solution}, {Key: "tag", Value: tag}}
-	var updated models.ToolboxSubstitution
-	err = c.db.Collection(toolboxSubstitutionsCollection).FindOneAndUpdate(ctx,
-		bson.D{{Key: "_id", Value: objectID}}, bson.D{{Key: "$set", Value: set}},
-		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&updated)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.ToolboxSubstitution{}, ToolboxEntryNotFoundError
-		}
-		return models.ToolboxSubstitution{}, err
-	}
-	return updated, nil
-}
-
-func (c *Client) ListToolboxSubstitutions(ctx context.Context) ([]models.ToolboxSubstitution, error) {
-	cursor, err := c.db.Collection(toolboxSubstitutionsCollection).Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "problem", Value: 1}}))
-	if err != nil {
-		return nil, err
-	}
-	items := []models.ToolboxSubstitution{}
-	if err := cursor.All(ctx, &items); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-func (c *Client) GetToolboxSubstitutionById(ctx context.Context, id string) (models.ToolboxSubstitution, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return models.ToolboxSubstitution{}, ToolboxEntryNotFoundError
-	}
-	var item models.ToolboxSubstitution
-	err = c.db.Collection(toolboxSubstitutionsCollection).FindOne(ctx, bson.D{{Key: "_id", Value: objectID}}).Decode(&item)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.ToolboxSubstitution{}, ToolboxEntryNotFoundError
-		}
-		return models.ToolboxSubstitution{}, err
-	}
-	return item, nil
-}
-
-// SetToolboxSubstitutionTranslations is SetToolboxUnitTranslations for
-// substitutions.
-func (c *Client) SetToolboxSubstitutionTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return ToolboxEntryNotFoundError
-	}
-	set := bson.D{{Key: "source_locale", Value: sourceLocale}, {Key: "translations", Value: translations}}
-	result, err := c.db.Collection(toolboxSubstitutionsCollection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: objectID}}, bson.D{{Key: "$set", Value: set}})
-	if err != nil {
-		return err
-	}
-	if result.MatchedCount == 0 {
-		return ToolboxEntryNotFoundError
-	}
-	return nil
-}
-
-// GetToolboxSubstitutionByProblemLower looks up an existing substitution by
-// case-insensitive problem text, for suggestion duplicate detection.
-func (c *Client) GetToolboxSubstitutionByProblemLower(ctx context.Context, problemLower string) (models.ToolboxSubstitution, error) {
-	var item models.ToolboxSubstitution
-	err := c.db.Collection(toolboxSubstitutionsCollection).FindOne(ctx, bson.D{{Key: "problem", Value: bson.D{{Key: "$regex", Value: "^" + regexp.QuoteMeta(problemLower) + "$"}, {Key: "$options", Value: "i"}}}}).Decode(&item)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.ToolboxSubstitution{}, ToolboxEntryNotFoundError
-		}
-		return models.ToolboxSubstitution{}, err
-	}
-	return item, nil
-}
-
 // --- Seeding ---
 
 // SeedToolboxDefaults inserts a starter set of units the first time the
 // collection is empty - idempotent, safe to call on every startup. It never
 // touches a collection that already has documents, so admin edits/deletions
-// are never undone. Substitutions get no seed data.
+// are never undone.
 func (c *Client) SeedToolboxDefaults(ctx context.Context) error {
 	if count, err := c.db.Collection(toolboxUnitsCollection).CountDocuments(ctx, bson.D{}); err != nil {
 		return err

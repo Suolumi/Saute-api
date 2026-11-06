@@ -36,35 +36,8 @@ type ToolboxUnit struct {
 	Translations map[string]ToolboxUnitTranslation `bson:"translations,omitempty" json:"-"`
 }
 
-// ToolboxSubstitutionTranslation is one locale's machine-translated copy of
-// a ToolboxSubstitution's translatable fields.
-type ToolboxSubstitutionTranslation struct {
-	Problem  string `bson:"problem" json:"problem"`
-	Solution string `bson:"solution" json:"solution"`
-	Tag      string `bson:"tag,omitempty" json:"tag,omitempty"`
-}
-
-// ToolboxSubstitution is one ingredient-swap tip: Problem is the missing
-// ingredient/situation (e.g. "No buttermilk"), Solution the swap to use, Tag
-// a short category label shown as a badge. SourceLocale is detected from Name on
-// write; Translations holds a machine translation per configured locale,
-// regenerated in full on every write.
-type ToolboxSubstitution struct {
-	Id           *primitive.ObjectID                       `bson:"_id,omitempty" json:"id"`
-	Problem      string                                    `bson:"problem" json:"problem"`
-	Solution     string                                    `bson:"solution" json:"solution"`
-	Tag          string                                    `bson:"tag,omitempty" json:"tag,omitempty"`
-	CreatedAt    time.Time                                 `bson:"created_at" json:"created_at"`
-	SourceLocale string                                    `bson:"source_locale,omitempty" json:"-"`
-	Translations map[string]ToolboxSubstitutionTranslation `bson:"translations,omitempty" json:"-"`
-}
-
 type ListToolboxUnitsResponse struct {
 	Items []ToolboxUnit `json:"items"`
-}
-
-type ListToolboxSubstitutionsResponse struct {
-	Items []ToolboxSubstitution `json:"items"`
 }
 
 // AdminUnitRequest is the body of POST /admin/units and PUT /admin/units/:id.

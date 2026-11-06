@@ -25,6 +25,7 @@ const (
 	legacyCiqualCollection             = "nutrition_ingredients"
 	legacyToolboxIngredientsCollection = "toolbox_ingredients"
 	legacyToolboxSuggestionsCollection = "toolbox_suggestions"
+	legacySubstitutionsCollection      = "toolbox_substitutions"
 )
 
 var FoodNotFoundError = errors.New("food not found")
@@ -87,6 +88,7 @@ func (c *Client) UpdateFood(ctx context.Context, food models.FoodItem) (models.F
 	set := bson.D{
 		{Key: "names", Value: food.Names}, {Key: "aliases", Value: food.Aliases},
 		{Key: "grams_per_piece", Value: food.GramsPerPiece}, {Key: "g_per_100ml", Value: food.GPer100ml},
+		{Key: "substitutes", Value: food.Substitutes},
 		{Key: "kcal_per_100g", Value: food.KcalPer100g}, {Key: "protein_g_per_100g", Value: food.ProteinG},
 		{Key: "carbs_g_per_100g", Value: food.CarbsG}, {Key: "fat_g_per_100g", Value: food.FatG},
 		{Key: "salt_g_per_100g", Value: food.SaltG}, {Key: "sugar_g_per_100g", Value: food.SugarG},
@@ -118,7 +120,9 @@ func (c *Client) CountLinksForFood(ctx context.Context, id string) (int64, error
 }
 
 // MigrateFoods seeds the food list when the collection is empty, then moves
-// data off the collections it replaces: links and nutrition suggestions
+// data off the collections it replaces: Toolbox substitutions move onto the
+// food their problem names (see migrateSubstitutions); links and nutrition
+// suggestions
 // pointing at an old Ciqual entry are repointed at the food that entry was
 // folded into, or deleted (and logged) when it was dropped. The old
 // collections are dropped only once every link is handled, so a run cut
@@ -139,16 +143,21 @@ func (c *Client) MigrateFoods(ctx context.Context) error {
 	}
 
 	names, err := c.db.ListCollectionNames(ctx, bson.D{{Key: "name", Value: bson.D{{Key: "$in", Value: bson.A{
-		legacyCiqualCollection, legacyToolboxIngredientsCollection, legacyToolboxSuggestionsCollection,
+		legacyCiqualCollection, legacyToolboxIngredientsCollection, legacyToolboxSuggestionsCollection, legacySubstitutionsCollection,
 	}}}}})
 	if err != nil {
 		return err
 	}
 	for _, name := range names {
-		if name == legacyCiqualCollection {
-			if err := c.remapCiqualReferences(ctx, rows); err != nil {
-				return err
-			}
+		var err error
+		switch name {
+		case legacyCiqualCollection:
+			err = c.remapCiqualReferences(ctx, rows)
+		case legacySubstitutionsCollection:
+			err = c.migrateSubstitutions(ctx)
+		}
+		if err != nil {
+			return err
 		}
 	}
 	for _, name := range names {
@@ -246,6 +255,90 @@ func (c *Client) remapNutritionIDs(ctx context.Context, collection string, foodB
 	}
 	if _, err := c.db.Collection(collection).BulkWrite(ctx, writes); err != nil {
 		return fmt.Errorf("remap %s: %w", collection, err)
+	}
+	return nil
+}
+
+// substitutionProblemPrefixes are the "no X" openings a Toolbox
+// substitution's problem text used before naming the missing food.
+var substitutionProblemPrefixes = []string{"no ", "pas de ", "pas d'", "ei ", "没有"}
+
+// substituteProblemFood returns the id of the food a substitution's problem
+// names, with or without a "no ..." opening, by exact name or alias in any
+// locale; "" when none does.
+func substituteProblemFood(problem string, foods []models.FoodItem) string {
+	key := strings.ToLower(strings.TrimSpace(problem))
+	candidates := []string{key}
+	for _, prefix := range substitutionProblemPrefixes {
+		if rest, ok := strings.CutPrefix(key, prefix); ok {
+			candidates = append(candidates, strings.TrimSpace(rest))
+		}
+	}
+	for _, food := range foods {
+		for _, locale := range models.FoodLocales {
+			names := append([]string{food.Names[locale]}, food.Aliases[locale]...)
+			for _, name := range names {
+				name = strings.ToLower(strings.TrimSpace(name))
+				for _, candidate := range candidates {
+					if name != "" && name == candidate {
+						return food.Id
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// migrateSubstitutions appends each Toolbox substitution's solution, in its
+// source locale and every stored translation, to the substitutes of the
+// food its problem names. Unmatched ones are logged and left to be dropped.
+func (c *Client) migrateSubstitutions(ctx context.Context) error {
+	foods, err := c.ListFoods(ctx)
+	if err != nil {
+		return err
+	}
+	var items []struct {
+		Problem      string `bson:"problem"`
+		Solution     string `bson:"solution"`
+		SourceLocale string `bson:"source_locale"`
+		Translations map[string]struct {
+			Solution string `bson:"solution"`
+		} `bson:"translations"`
+	}
+	cursor, err := c.db.Collection(legacySubstitutionsCollection).Find(ctx, bson.D{})
+	if err != nil {
+		return err
+	}
+	if err := cursor.All(ctx, &items); err != nil {
+		return err
+	}
+	for _, item := range items {
+		food := substituteProblemFood(item.Problem, foods)
+		if food == "" {
+			utils.LogError("Dropped a substitution with no matching food", nil, item.Problem)
+			continue
+		}
+		lines := bson.D{}
+		source := item.SourceLocale
+		if source == "" {
+			source = "en"
+		}
+		for _, locale := range models.FoodLocales {
+			text := item.Translations[locale].Solution
+			if locale == source {
+				text = item.Solution
+			}
+			if text = strings.TrimSpace(text); text != "" {
+				lines = append(lines, bson.E{Key: "substitutes." + locale, Value: text})
+			}
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		if _, err := c.db.Collection(foodsCollection).UpdateOne(ctx, bson.D{{Key: "_id", Value: food}}, bson.D{{Key: "$addToSet", Value: lines}}); err != nil {
+			return fmt.Errorf("move substitution %q: %w", item.Problem, err)
+		}
 	}
 	return nil
 }

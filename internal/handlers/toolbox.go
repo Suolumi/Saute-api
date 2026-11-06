@@ -17,13 +17,3 @@ func (h *Handlers) ListToolboxUnits(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, models.ListToolboxUnitsResponse{Items: items})
 }
-
-// ListToolboxSubstitutions is GET /toolbox/substitutions - public, the
-// substitutions list.
-func (h *Handlers) ListToolboxSubstitutions(c echo.Context) error {
-	items, err := h.recipes.ListToolboxSubstitutions(c.Request().Context(), c.QueryParam("locale"))
-	if err != nil {
-		return errorResponse(http.StatusInternalServerError, "Could not list substitutions", err, c)
-	}
-	return c.JSON(http.StatusOK, models.ListToolboxSubstitutionsResponse{Items: items})
-}

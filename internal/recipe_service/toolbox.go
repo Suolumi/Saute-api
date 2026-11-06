@@ -14,15 +14,13 @@ import (
 
 // Kinds of Toolbox entry scheduleToolboxTranslation handles.
 const (
-	toolboxKindUnit         = "unit"
-	toolboxKindSubstitution = "substitution"
+	toolboxKindUnit = "unit"
 )
 
 const (
 	minToolboxUnitToBase   = 0.001
 	maxToolboxUnitToBase   = 100000.0
 	maxToolboxNameLength   = 100
-	maxToolboxTextLength   = 300
 	maxToolboxSymbolLength = 20
 )
 
@@ -40,40 +38,12 @@ func (s *Service) ListToolboxUnits(ctx context.Context, locale string) ([]models
 	return items, nil
 }
 
-// ListToolboxSubstitutions returns every ingredient-swap tip, resolved into
-// locale like ListToolboxUnits.
-func (s *Service) ListToolboxSubstitutions(ctx context.Context, locale string) ([]models.ToolboxSubstitution, error) {
-	items, err := s.db.ListToolboxSubstitutions(ctx)
-	if err != nil {
-		return nil, err
-	}
-	locale, _ = normalizeLocale(locale)
-	for i := range items {
-		items[i] = resolveToolboxSubstitutionLocale(items[i], locale)
-	}
-	return items, nil
-}
-
 // resolveToolboxUnitLocale swaps in item's stored translation for locale,
 // unless locale is the item's own source language. Only Name is translatable.
 func resolveToolboxUnitLocale(item models.ToolboxUnit, locale string) models.ToolboxUnit {
 	if locale != "" && !sameBaseLocale(item.SourceLocale, locale) {
 		if t, ok := item.Translations[locale]; ok {
 			item.Name = t.Name
-		}
-	}
-	item.Translations = nil
-	return item
-}
-
-// resolveToolboxSubstitutionLocale is resolveToolboxUnitLocale for
-// substitutions.
-func resolveToolboxSubstitutionLocale(item models.ToolboxSubstitution, locale string) models.ToolboxSubstitution {
-	if locale != "" && !sameBaseLocale(item.SourceLocale, locale) {
-		if t, ok := item.Translations[locale]; ok {
-			item.Problem = t.Problem
-			item.Solution = t.Solution
-			item.Tag = t.Tag
 		}
 	}
 	item.Translations = nil
@@ -165,29 +135,6 @@ func (s *Service) translateToolboxEntry(kind string, id primitive.ObjectID) erro
 		}
 		return s.db.SetToolboxUnitTranslations(ctx, id.Hex(), source, translations)
 
-	case toolboxKindSubstitution:
-		entry, err := s.db.GetToolboxSubstitutionById(ctx, id.Hex())
-		if err != nil {
-			return err
-		}
-		source, err := s.translator.DetectLocale(entry.Problem + " " + entry.Solution)
-		if err != nil {
-			return err
-		}
-		translations := make(map[string]models.ToolboxSubstitutionTranslation)
-		for _, locale := range targetLocalesFor(source, s.targetLocales) {
-			translated, err := s.translateTextsCased([]string{entry.Problem, entry.Solution, entry.Tag}, locale)
-			if err != nil {
-				return err
-			}
-			tag := ""
-			if entry.Tag != "" {
-				tag = translated[2]
-			}
-			translations[locale] = models.ToolboxSubstitutionTranslation{Problem: translated[0], Solution: translated[1], Tag: tag}
-		}
-		return s.db.SetToolboxSubstitutionTranslations(ctx, id.Hex(), source, translations)
-
 	default:
 		return fmt.Errorf("%w: unknown toolbox kind %q", ErrInvalid, kind)
 	}
@@ -216,13 +163,6 @@ func (s *Service) backfillToolboxTranslations(ctx context.Context) {
 		for _, item := range units {
 			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
 				s.scheduleToolboxTranslation(toolboxKindUnit, *item.Id)
-			}
-		}
-	}
-	if substitutions, err := s.db.ListToolboxSubstitutions(ctx); err == nil {
-		for _, item := range substitutions {
-			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
-				s.scheduleToolboxTranslation(toolboxKindSubstitution, *item.Id)
 			}
 		}
 	}

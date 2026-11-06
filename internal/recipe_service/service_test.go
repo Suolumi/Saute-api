@@ -59,11 +59,8 @@ type fakeStore struct {
 	repointRecipeReferences int
 
 	listToolboxUnitsFn                      func() ([]models.ToolboxUnit, error)
-	listToolboxSubstitutionsFn              func() ([]models.ToolboxSubstitution, error)
 	getToolboxUnitByIdFn                    func(id string) (models.ToolboxUnit, error)
-	getToolboxSubstitutionByIdFn            func(id string) (models.ToolboxSubstitution, error)
 	setToolboxUnitTranslationsFn            func(id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error
-	setToolboxSubstitutionTranslationsFn    func(id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error
 	getIngredientNutritionLinkByNameLowerFn func(nameLower string) (models.IngredientNutritionLink, error)
 	getUnitAliasByAliasLowerFn              func(aliasLower string) (models.UnitAlias, error)
 	listFoodsFn                             func() ([]models.FoodItem, error)
@@ -296,34 +293,6 @@ func (f *fakeStore) GetToolboxUnitByNameLower(context.Context, string) (models.T
 func (f *fakeStore) SetToolboxUnitTranslations(_ context.Context, id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error {
 	if f.setToolboxUnitTranslationsFn != nil {
 		return f.setToolboxUnitTranslationsFn(id, sourceLocale, translations)
-	}
-	return nil
-}
-
-func (f *fakeStore) CreateToolboxSubstitution(context.Context, string, string, string) (models.ToolboxSubstitution, error) {
-	return models.ToolboxSubstitution{}, nil
-}
-func (f *fakeStore) UpdateToolboxSubstitution(context.Context, string, string, string, string) (models.ToolboxSubstitution, error) {
-	return models.ToolboxSubstitution{}, nil
-}
-func (f *fakeStore) ListToolboxSubstitutions(context.Context) ([]models.ToolboxSubstitution, error) {
-	if f.listToolboxSubstitutionsFn != nil {
-		return f.listToolboxSubstitutionsFn()
-	}
-	return nil, nil
-}
-func (f *fakeStore) GetToolboxSubstitutionById(_ context.Context, id string) (models.ToolboxSubstitution, error) {
-	if f.getToolboxSubstitutionByIdFn != nil {
-		return f.getToolboxSubstitutionByIdFn(id)
-	}
-	return models.ToolboxSubstitution{}, nil
-}
-func (f *fakeStore) GetToolboxSubstitutionByProblemLower(context.Context, string) (models.ToolboxSubstitution, error) {
-	return models.ToolboxSubstitution{}, mongorepo.ToolboxEntryNotFoundError
-}
-func (f *fakeStore) SetToolboxSubstitutionTranslations(_ context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error {
-	if f.setToolboxSubstitutionTranslationsFn != nil {
-		return f.setToolboxSubstitutionTranslationsFn(id, sourceLocale, translations)
 	}
 	return nil
 }

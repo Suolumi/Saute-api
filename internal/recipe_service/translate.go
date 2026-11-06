@@ -130,7 +130,7 @@ func (s *Service) RetranslateLocale(ctx context.Context, recipeID, locale string
 
 // BackfillTranslations translates, in the background, whatever a configured
 // target locale is still missing: recipes without a current translation row,
-// tags with a blank label, Toolbox units and substitutions without a translation. Once
+// tags with a blank label, Toolbox units without a translation. Once
 // everything is translated it does nothing, so it runs on every startup; it
 // also retries translations that failed on write.
 func (s *Service) BackfillTranslations(ctx context.Context) {

@@ -59,20 +59,6 @@ func TestResolveToolboxUnitLocaleServesTranslation(t *testing.T) {
 	}
 }
 
-func TestResolveToolboxSubstitutionLocaleServesTranslation(t *testing.T) {
-	item := models.ToolboxSubstitution{
-		Problem: "No buttermilk", Solution: "Milk + lemon juice", Tag: "dairy", SourceLocale: "en",
-		Translations: map[string]models.ToolboxSubstitutionTranslation{
-			"fr": {Problem: "Pas de babeurre", Solution: "Lait + jus de citron", Tag: "laitier"},
-		},
-	}
-
-	got := resolveToolboxSubstitutionLocale(item, "fr")
-	if got.Problem != "Pas de babeurre" || got.Solution != "Lait + jus de citron" || got.Tag != "laitier" {
-		t.Fatalf("got = %+v, want the fr translation", got)
-	}
-}
-
 func TestTranslateToolboxEntryDetectsSourceAndTranslatesIntoEveryOtherTarget(t *testing.T) {
 	id := ptrObjectID()
 	var gotID, gotSourceLocale string
@@ -105,35 +91,5 @@ func TestTranslateToolboxEntryDetectsSourceAndTranslatesIntoEveryOtherTarget(t *
 	}
 	if !reflect.DeepEqual(gotTranslations, want) {
 		t.Fatalf("translations = %+v, want %+v (en dropped as the detected source locale)", gotTranslations, want)
-	}
-}
-
-func TestTranslateToolboxEntryTranslatesSubstitutions(t *testing.T) {
-	id := ptrObjectID()
-	var gotTranslations map[string]models.ToolboxSubstitutionTranslation
-	store := &fakeStore{
-		getToolboxSubstitutionByIdFn: func(string) (models.ToolboxSubstitution, error) {
-			return models.ToolboxSubstitution{Id: id, Problem: "No buttermilk", Solution: "Milk + lemon juice", Tag: "dairy"}, nil
-		},
-		setToolboxSubstitutionTranslationsFn: func(_, _ string, translations map[string]models.ToolboxSubstitutionTranslation) error {
-			gotTranslations = translations
-			return nil
-		},
-	}
-	s := &Service{
-		db:             store,
-		translator:     fakeTranslator{},
-		targetLocales:  []string{"en", "fr"},
-		translateSlots: make(chan struct{}, 1),
-	}
-
-	if err := s.translateToolboxEntry(toolboxKindSubstitution, *id); err != nil {
-		t.Fatalf("translateToolboxEntry: %v", err)
-	}
-	want := map[string]models.ToolboxSubstitutionTranslation{
-		"fr": {Problem: "No buttermilk-fr", Solution: "Milk + lemon juice-fr", Tag: "dairy-fr"},
-	}
-	if !reflect.DeepEqual(gotTranslations, want) {
-		t.Fatalf("translations = %+v, want %+v", gotTranslations, want)
 	}
 }

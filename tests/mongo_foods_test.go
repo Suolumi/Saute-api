@@ -101,3 +101,29 @@ func TestAdminFoodAndUnitCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.ErrorIs(t, svc.AdminDeleteUnit(ctx, unit.Id.Hex()), recipe_service.ErrUnitInUse)
 }
+
+// TestMigrateFoodsMovesSubstitutions covers moving Toolbox substitutions
+// onto foods: a matching one lands on the food in its source locale and
+// translations, an unmatched one is dropped, and a re-run adds nothing.
+func TestMigrateFoodsMovesSubstitutions(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	require.NoError(t, db.MigrateFoods(ctx))
+	_, err := db.RawDatabase().Collection("toolbox_substitutions").InsertMany(ctx, []interface{}{
+		bson.M{"problem": "No buttermilk", "solution": "Milk with a spoon of lemon juice", "source_locale": "en",
+			"translations": bson.M{"fr": bson.M{"problem": "Pas de babeurre", "solution": "Du lait avec une cuillère de jus de citron"}}},
+		bson.M{"problem": "Too salty soup", "solution": "Add a potato"},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, db.MigrateFoods(ctx))
+	require.NoError(t, db.MigrateFoods(ctx))
+
+	food, err := db.GetFoodById(ctx, "buttermilk")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Milk with a spoon of lemon juice"}, food.Substitutes["en"])
+	assert.Equal(t, []string{"Du lait avec une cuillère de jus de citron"}, food.Substitutes["fr"])
+	names, err := db.RawDatabase().ListCollectionNames(ctx, bson.M{"name": "toolbox_substitutions"})
+	require.NoError(t, err)
+	assert.Empty(t, names)
+}

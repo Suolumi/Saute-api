@@ -291,7 +291,6 @@ func (h *Handlers) RegisterEndpoints() {
 
 	// Toolbox routes
 	unprotectedRouter.GET("/toolbox/units", h.ListToolboxUnits)
-	unprotectedRouter.GET("/toolbox/substitutions", h.ListToolboxSubstitutions)
 
 	// Nutrition routes
 	unprotectedRouter.GET("/foods", h.ListFoods)

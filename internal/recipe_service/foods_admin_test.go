@@ -103,3 +103,18 @@ func TestAdminUnitValidatesAndRefusesDeleteWhileAliased(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnitInUse", err)
 	}
 }
+
+func TestAdminCreateFoodCleansSubstitutes(t *testing.T) {
+	store := adminFoodStore()
+	var saved models.FoodItem
+	store.createFoodFn = func(food models.FoodItem) error { saved = food; return nil }
+	req := validFoodRequest()
+	req.Substitutes = map[string][]string{"en": {" Pear ", "", "pear", "Apple"}}
+
+	if _, err := (&Service{db: store}).AdminCreateFood(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Substitutes["en"]; len(got) != 2 || got[0] != "Pear" || got[1] != "Apple" {
+		t.Fatalf("substitutes = %q", got)
+	}
+}

@@ -18,6 +18,8 @@ import (
 const (
 	maxFoodNameLength   = 100
 	maxFoodAliases      = 30
+	maxFoodSubstitutes  = 10
+	maxSubstituteLength = 300
 	maxFoodKcalPer100g  = 900.0
 	maxFoodGramsPer100g = 100.0
 )
@@ -81,7 +83,7 @@ func (s *Service) AdminDeleteFood(ctx context.Context, id string) error {
 func (s *Service) validateFood(ctx context.Context, id string, req models.AdminFoodRequest) (models.FoodItem, error) {
 	food := models.FoodItem{
 		Id: id, Names: map[string]string{}, Aliases: map[string][]string{},
-		GramsPerPiece: req.GramsPerPiece, GPer100ml: req.GPer100ml,
+		GramsPerPiece: req.GramsPerPiece, GPer100ml: req.GPer100ml, Substitutes: map[string][]string{},
 		KcalPer100g: req.KcalPer100g, ProteinG: req.ProteinG, CarbsG: req.CarbsG,
 		FatG: req.FatG, SaltG: req.SaltG, SugarG: req.SugarG,
 	}
@@ -120,6 +122,28 @@ func (s *Service) validateFood(ctx context.Context, id string, req models.AdminF
 			return models.FoodItem{}, fmt.Errorf("%w: at most %d aliases per language", ErrInvalid, maxFoodAliases)
 		}
 		food.Aliases[locale] = cleaned
+	}
+	for locale, lines := range req.Substitutes {
+		if !slices.Contains(models.FoodLocales, locale) {
+			return models.FoodItem{}, fmt.Errorf("%w: unsupported locale %q", ErrInvalid, locale)
+		}
+		cleaned := []string{}
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || slices.ContainsFunc(cleaned, func(c string) bool { return strings.EqualFold(c, line) }) {
+				continue
+			}
+			if len(line) > maxSubstituteLength {
+				return models.FoodItem{}, fmt.Errorf("%w: substitutes must be at most %d characters", ErrInvalid, maxSubstituteLength)
+			}
+			cleaned = append(cleaned, line)
+		}
+		if len(cleaned) > maxFoodSubstitutes {
+			return models.FoodItem{}, fmt.Errorf("%w: at most %d substitutes per language", ErrInvalid, maxFoodSubstitutes)
+		}
+		if len(cleaned) > 0 {
+			food.Substitutes[locale] = cleaned
+		}
 	}
 	if food.KcalPer100g < 0 || food.KcalPer100g > maxFoodKcalPer100g {
 		return models.FoodItem{}, fmt.Errorf("%w: kcal per 100 g must be between 0 and %g", ErrInvalid, maxFoodKcalPer100g)

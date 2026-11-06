@@ -177,13 +177,6 @@ type Store interface {
 	CountUnitAliasesForUnit(ctx context.Context, id primitive.ObjectID) (int64, error)
 	SetToolboxUnitTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error
 
-	CreateToolboxSubstitution(ctx context.Context, problem, solution, tag string) (models.ToolboxSubstitution, error)
-	UpdateToolboxSubstitution(ctx context.Context, id string, problem, solution, tag string) (models.ToolboxSubstitution, error)
-	ListToolboxSubstitutions(ctx context.Context) ([]models.ToolboxSubstitution, error)
-	GetToolboxSubstitutionById(ctx context.Context, id string) (models.ToolboxSubstitution, error)
-	GetToolboxSubstitutionByProblemLower(ctx context.Context, problemLower string) (models.ToolboxSubstitution, error)
-	SetToolboxSubstitutionTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error
-
 	ListFoods(ctx context.Context) ([]models.FoodItem, error)
 	GetFoodById(ctx context.Context, id string) (models.FoodItem, error)
 	CreateFood(ctx context.Context, food models.FoodItem) error
