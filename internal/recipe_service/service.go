@@ -97,6 +97,15 @@ var (
 	// ApproveNutritionSuggestion for a link/alias target deleted since
 	// submission.
 	ErrFoodNotFound = errors.New("food not found")
+	// ErrFoodExists is returned when a food's id, or one of its names or
+	// aliases in a locale, is already another food's.
+	ErrFoodExists = errors.New("food already exists")
+	// ErrFoodInUse is AdminDeleteFood's refusal while a link points at it.
+	ErrFoodInUse = errors.New("food is in use")
+	// ErrUnitExists is returned for a unit name another unit already has.
+	ErrUnitExists = errors.New("unit already exists")
+	// ErrUnitInUse is AdminDeleteUnit's refusal while an alias points at it.
+	ErrUnitInUse = errors.New("unit is in use")
 )
 
 // defaultCategory normalizes a possibly-legacy empty Category to Food,
@@ -164,6 +173,8 @@ type Store interface {
 	ListToolboxUnits(ctx context.Context) ([]models.ToolboxUnit, error)
 	GetToolboxUnitById(ctx context.Context, id string) (models.ToolboxUnit, error)
 	GetToolboxUnitByNameLower(ctx context.Context, nameLower string) (models.ToolboxUnit, error)
+	DeleteToolboxUnit(ctx context.Context, id string) error
+	CountUnitAliasesForUnit(ctx context.Context, id primitive.ObjectID) (int64, error)
 	SetToolboxUnitTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error
 
 	CreateToolboxSubstitution(ctx context.Context, problem, solution, tag string) (models.ToolboxSubstitution, error)
@@ -175,6 +186,10 @@ type Store interface {
 
 	ListFoods(ctx context.Context) ([]models.FoodItem, error)
 	GetFoodById(ctx context.Context, id string) (models.FoodItem, error)
+	CreateFood(ctx context.Context, food models.FoodItem) error
+	UpdateFood(ctx context.Context, food models.FoodItem) (models.FoodItem, error)
+	DeleteFood(ctx context.Context, id string) error
+	CountLinksForFood(ctx context.Context, id string) (int64, error)
 
 	CreateIngredientNutritionLink(ctx context.Context, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	UpdateIngredientNutritionLink(ctx context.Context, id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)

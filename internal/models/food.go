@@ -27,3 +27,19 @@ var FoodLocales = []string{"en", "fr", "fi", "zh"}
 type ListFoodsResponse struct {
 	Items []FoodItem `json:"items"`
 }
+
+// AdminFoodRequest is the body of POST /admin/foods and PUT
+// /admin/foods/:id; Id is read on create only.
+type AdminFoodRequest struct {
+	Id            string              `json:"id"`
+	Names         map[string]string   `json:"names"`
+	Aliases       map[string][]string `json:"aliases"`
+	GramsPerPiece *float64            `json:"grams_per_piece"`
+	GPer100ml     *float64            `json:"g_per_100ml"`
+	KcalPer100g   float64             `json:"kcal_per_100g"`
+	ProteinG      float64             `json:"protein_g_per_100g"`
+	CarbsG        float64             `json:"carbs_g_per_100g"`
+	FatG          float64             `json:"fat_g_per_100g"`
+	SaltG         float64             `json:"salt_g_per_100g"`
+	SugarG        float64             `json:"sugar_g_per_100g"`
+}

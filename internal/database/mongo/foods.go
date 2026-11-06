@@ -28,6 +28,7 @@ const (
 )
 
 var FoodNotFoundError = errors.New("food not found")
+var FoodExistsError = errors.New("food already exists")
 
 //go:embed seeddata/foods.json
 var foodsSeed []byte
@@ -70,6 +71,50 @@ func (c *Client) GetFoodById(ctx context.Context, id string) (models.FoodItem, e
 		return models.FoodItem{}, FoodNotFoundError
 	}
 	return item, err
+}
+
+func (c *Client) CreateFood(ctx context.Context, food models.FoodItem) error {
+	_, err := c.db.Collection(foodsCollection).InsertOne(ctx, food)
+	if mongo.IsDuplicateKeyError(err) {
+		return FoodExistsError
+	}
+	return err
+}
+
+// UpdateFood overwrites every field of an existing food except its id and
+// creation time.
+func (c *Client) UpdateFood(ctx context.Context, food models.FoodItem) (models.FoodItem, error) {
+	set := bson.D{
+		{Key: "names", Value: food.Names}, {Key: "aliases", Value: food.Aliases},
+		{Key: "grams_per_piece", Value: food.GramsPerPiece}, {Key: "g_per_100ml", Value: food.GPer100ml},
+		{Key: "kcal_per_100g", Value: food.KcalPer100g}, {Key: "protein_g_per_100g", Value: food.ProteinG},
+		{Key: "carbs_g_per_100g", Value: food.CarbsG}, {Key: "fat_g_per_100g", Value: food.FatG},
+		{Key: "salt_g_per_100g", Value: food.SaltG}, {Key: "sugar_g_per_100g", Value: food.SugarG},
+	}
+	var updated models.FoodItem
+	err := c.db.Collection(foodsCollection).FindOneAndUpdate(ctx,
+		bson.D{{Key: "_id", Value: food.Id}}, bson.D{{Key: "$set", Value: set}},
+		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&updated)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return models.FoodItem{}, FoodNotFoundError
+	}
+	return updated, err
+}
+
+func (c *Client) DeleteFood(ctx context.Context, id string) error {
+	result, err := c.db.Collection(foodsCollection).DeleteOne(ctx, bson.D{{Key: "_id", Value: id}})
+	if err != nil {
+		return err
+	}
+	if result.DeletedCount == 0 {
+		return FoodNotFoundError
+	}
+	return nil
+}
+
+// CountLinksForFood counts the ingredient links pointing at food id.
+func (c *Client) CountLinksForFood(ctx context.Context, id string) (int64, error) {
+	return c.db.Collection(nutritionLinksCollection).CountDocuments(ctx, bson.D{{Key: "food_id", Value: id}})
 }
 
 // MigrateFoods seeds the food list when the collection is empty, then moves

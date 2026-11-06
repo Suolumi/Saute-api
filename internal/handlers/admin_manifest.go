@@ -251,6 +251,43 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		},
 	},
 	{
+		ID: "admin.foods.delete", Method: "DELETE", Path: "/admin/foods/:id", Category: "nutrition",
+		Label: "Delete food", Description: "Remove a food from the list. Refused while an ingredient link points at it. Create and edit foods from the Foods admin page.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Food ID"},
+		},
+	},
+	{
+		ID: "admin.units.create", Method: "POST", Path: "/admin/units", Category: "nutrition",
+		Label: "Create unit", Description: "Add a weight or volume unit; to_base converts it to grams or millilitres.",
+		Params: []models.AdminRouteParam{
+			{Name: "name", In: "body", Type: "string", Required: true, Label: "Name"},
+			{Name: "symbol", In: "body", Type: "string", Required: true, Label: "Symbol"},
+			{Name: "kind", In: "body", Type: "string", Required: true, Label: "Kind (weight / volume)"},
+			{Name: "to_base", In: "body", Type: "int", Required: true, Label: "Grams or millilitres per unit"},
+		},
+	},
+	{
+		ID: "admin.units.update", Method: "PUT", Path: "/admin/units/:id", Category: "nutrition",
+		Label: "Update unit", Description: "Overwrite a unit; its name is re-translated in the background.",
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Unit ID"},
+			{Name: "name", In: "body", Type: "string", Required: true, Label: "Name"},
+			{Name: "symbol", In: "body", Type: "string", Required: true, Label: "Symbol"},
+			{Name: "kind", In: "body", Type: "string", Required: true, Label: "Kind (weight / volume)"},
+			{Name: "to_base", In: "body", Type: "int", Required: true, Label: "Grams or millilitres per unit"},
+		},
+	},
+	{
+		ID: "admin.units.delete", Method: "DELETE", Path: "/admin/units/:id", Category: "nutrition",
+		Label: "Delete unit", Description: "Remove a unit. Refused while a unit alias points at it.",
+		Destructive: true,
+		Params: []models.AdminRouteParam{
+			{Name: "id", In: "path", Type: "string", Required: true, Label: "Unit ID"},
+		},
+	},
+	{
 		ID: "admin.tags.create", Method: "POST", Path: "/admin/tags", Category: "tags",
 		Label: "Create tag", Description: "Add a recipe tag. Also add categories (list of food/diy), implies (list of slugs) and labels (locale to label map) to the JSON body; blank locales are machine-translated. The Tags admin page does this with a form.",
 		Params: []models.AdminRouteParam{

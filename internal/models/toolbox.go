@@ -66,3 +66,11 @@ type ListToolboxUnitsResponse struct {
 type ListToolboxSubstitutionsResponse struct {
 	Items []ToolboxSubstitution `json:"items"`
 }
+
+// AdminUnitRequest is the body of POST /admin/units and PUT /admin/units/:id.
+type AdminUnitRequest struct {
+	Name   string  `json:"name"`
+	Symbol string  `json:"symbol"`
+	Kind   string  `json:"kind"`
+	ToBase float64 `json:"to_base"`
+}

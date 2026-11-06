@@ -68,6 +68,11 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusNotFound, "Nutrition suggestion not found", nil, c)
 	case errors.Is(err, recipe_service.ErrFoodNotFound):
 		return errorResponse(http.StatusNotFound, "Food not found", nil, c)
+	case errors.Is(err, recipe_service.ErrFoodExists), errors.Is(err, recipe_service.ErrFoodInUse),
+		errors.Is(err, recipe_service.ErrUnitInUse):
+		return errorResponse(http.StatusConflict, err.Error(), nil, c)
+	case errors.Is(err, recipe_service.ErrUnitExists):
+		return errorResponse(http.StatusConflict, "A unit with this name already exists", nil, c)
 	case errors.Is(err, recipe_service.ErrFeedbackNotFound):
 		return errorResponse(http.StatusNotFound, "Feedback not found", nil, c)
 	case errors.Is(err, recipe_service.ErrFeedbackClosed):

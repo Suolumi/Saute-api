@@ -9,6 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+
+	"recipes/internal/models"
+	"recipes/internal/recipe_service"
 )
 
 // TestMigrateFoodsRemapsCiqualLinks covers the one-time move off Ciqual: a
@@ -62,4 +65,39 @@ func TestMigrateFoodsRemapsCiqualLinks(t *testing.T) {
 	links, err := db.ListIngredientNutritionLinks(ctx)
 	require.NoError(t, err)
 	assert.Len(t, links, 1)
+}
+
+// TestAdminFoodAndUnitCRUD covers the admin writes against the real
+// collections: unique food ids and unit names, and deletes refused while
+// something points at the entry.
+func TestAdminFoodAndUnitCRUD(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	svc := newTestRecipeService(t, db)
+	require.NoError(t, db.SeedToolboxDefaults(ctx))
+	require.NoError(t, db.MigrateFoods(ctx))
+
+	req := models.AdminFoodRequest{Id: "test-quince", Names: map[string]string{"en": "Test quince"}, KcalPer100g: 57}
+	_, err := svc.AdminCreateFood(ctx, req)
+	require.NoError(t, err)
+	_, err = svc.AdminCreateFood(ctx, req)
+	assert.ErrorIs(t, err, recipe_service.ErrFoodExists)
+
+	density := 80.0
+	req.GPer100ml = &density
+	updated, err := svc.AdminUpdateFood(ctx, "test-quince", req)
+	require.NoError(t, err)
+	require.NotNil(t, updated.GPer100ml)
+
+	_, err = svc.AdminCreateNutritionLink(ctx, models.AdminNutritionLinkRequest{IngredientName: "Quince jelly", FoodID: "test-quince"})
+	require.NoError(t, err)
+	assert.ErrorIs(t, svc.AdminDeleteFood(ctx, "test-quince"), recipe_service.ErrFoodInUse)
+
+	unit, err := svc.AdminCreateUnit(ctx, models.AdminUnitRequest{Name: "Test pinch", Symbol: "tpinch", Kind: "weight", ToBase: 0.3})
+	require.NoError(t, err)
+	_, err = svc.AdminCreateUnit(ctx, models.AdminUnitRequest{Name: "test pinch", Symbol: "tp", Kind: "weight", ToBase: 0.3})
+	assert.ErrorIs(t, err, recipe_service.ErrUnitExists)
+	_, err = svc.AdminCreateUnitAlias(ctx, models.AdminUnitAliasRequest{Alias: "tpinches", UnitID: unit.Id.Hex()})
+	require.NoError(t, err)
+	assert.ErrorIs(t, svc.AdminDeleteUnit(ctx, unit.Id.Hex()), recipe_service.ErrUnitInUse)
 }

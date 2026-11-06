@@ -67,6 +67,10 @@ type fakeStore struct {
 	getIngredientNutritionLinkByNameLowerFn func(nameLower string) (models.IngredientNutritionLink, error)
 	getUnitAliasByAliasLowerFn              func(aliasLower string) (models.UnitAlias, error)
 	listFoodsFn                             func() ([]models.FoodItem, error)
+	createFoodFn                            func(food models.FoodItem) error
+	updateFoodFn                            func(food models.FoodItem) (models.FoodItem, error)
+	countLinksForFoodFn                     func(id string) (int64, error)
+	countUnitAliasesForUnitFn               func(id primitive.ObjectID) (int64, error)
 	createIngredientNutritionLinkFn         func(name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	updateIngredientNutritionLinkFn         func(id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	createUnitAliasFn                       func(alias string, unitID primitive.ObjectID) (models.UnitAlias, error)
@@ -340,6 +344,37 @@ func (f *fakeStore) GetFoodById(_ context.Context, id string) (models.FoodItem, 
 		}
 	}
 	return models.FoodItem{}, mongorepo.FoodNotFoundError
+}
+
+func (f *fakeStore) CreateFood(_ context.Context, food models.FoodItem) error {
+	if f.createFoodFn != nil {
+		return f.createFoodFn(food)
+	}
+	return nil
+}
+func (f *fakeStore) UpdateFood(_ context.Context, food models.FoodItem) (models.FoodItem, error) {
+	if f.updateFoodFn != nil {
+		return f.updateFoodFn(food)
+	}
+	return food, nil
+}
+func (f *fakeStore) DeleteFood(context.Context, string) error {
+	return nil
+}
+func (f *fakeStore) CountLinksForFood(_ context.Context, id string) (int64, error) {
+	if f.countLinksForFoodFn != nil {
+		return f.countLinksForFoodFn(id)
+	}
+	return 0, nil
+}
+func (f *fakeStore) DeleteToolboxUnit(context.Context, string) error {
+	return nil
+}
+func (f *fakeStore) CountUnitAliasesForUnit(_ context.Context, id primitive.ObjectID) (int64, error) {
+	if f.countUnitAliasesForUnitFn != nil {
+		return f.countUnitAliasesForUnitFn(id)
+	}
+	return 0, nil
 }
 
 func (f *fakeStore) CreateIngredientNutritionLink(_ context.Context, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {

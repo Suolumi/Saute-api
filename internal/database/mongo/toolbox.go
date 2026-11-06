@@ -21,6 +21,7 @@ const (
 )
 
 var ToolboxEntryNotFoundError = errors.New("toolbox entry not found")
+var ToolboxUnitExistsError = errors.New("a unit with this name already exists")
 
 // --- Units ---
 
@@ -29,6 +30,9 @@ func (c *Client) CreateToolboxUnit(ctx context.Context, name, symbol, kind strin
 		Name: name, NameLower: strings.ToLower(name), Symbol: symbol, Kind: kind, ToBase: toBase, CreatedAt: time.Now().UTC(),
 	}
 	result, err := c.db.Collection(toolboxUnitsCollection).InsertOne(ctx, entry)
+	if mongo.IsDuplicateKeyError(err) {
+		return models.ToolboxUnit{}, ToolboxUnitExistsError
+	}
 	if err != nil {
 		return models.ToolboxUnit{}, err
 	}
@@ -54,9 +58,32 @@ func (c *Client) UpdateToolboxUnit(ctx context.Context, id string, name, symbol,
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return models.ToolboxUnit{}, ToolboxEntryNotFoundError
 		}
+		if mongo.IsDuplicateKeyError(err) {
+			return models.ToolboxUnit{}, ToolboxUnitExistsError
+		}
 		return models.ToolboxUnit{}, err
 	}
 	return updated, nil
+}
+
+func (c *Client) DeleteToolboxUnit(ctx context.Context, id string) error {
+	objectID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		return ToolboxEntryNotFoundError
+	}
+	result, err := c.db.Collection(toolboxUnitsCollection).DeleteOne(ctx, bson.D{{Key: "_id", Value: objectID}})
+	if err != nil {
+		return err
+	}
+	if result.DeletedCount == 0 {
+		return ToolboxEntryNotFoundError
+	}
+	return nil
+}
+
+// CountUnitAliasesForUnit counts the unit aliases pointing at unit id.
+func (c *Client) CountUnitAliasesForUnit(ctx context.Context, id primitive.ObjectID) (int64, error) {
+	return c.db.Collection(unitAliasesCollection).CountDocuments(ctx, bson.D{{Key: "unit_id", Value: id}})
 }
 
 func (c *Client) ListToolboxUnits(ctx context.Context) ([]models.ToolboxUnit, error) {

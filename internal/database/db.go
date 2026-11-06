@@ -75,6 +75,8 @@ type Database interface {
 	ListToolboxUnits(ctx context.Context) ([]models.ToolboxUnit, error)
 	GetToolboxUnitById(ctx context.Context, id string) (models.ToolboxUnit, error)
 	GetToolboxUnitByNameLower(ctx context.Context, nameLower string) (models.ToolboxUnit, error)
+	DeleteToolboxUnit(ctx context.Context, id string) error
+	CountUnitAliasesForUnit(ctx context.Context, id primitive.ObjectID) (int64, error)
 	SetToolboxUnitTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error
 
 	CreateToolboxSubstitution(ctx context.Context, problem, solution, tag string) (models.ToolboxSubstitution, error)
@@ -88,6 +90,10 @@ type Database interface {
 
 	ListFoods(ctx context.Context) ([]models.FoodItem, error)
 	GetFoodById(ctx context.Context, id string) (models.FoodItem, error)
+	CreateFood(ctx context.Context, food models.FoodItem) error
+	UpdateFood(ctx context.Context, food models.FoodItem) (models.FoodItem, error)
+	DeleteFood(ctx context.Context, id string) error
+	CountLinksForFood(ctx context.Context, id string) (int64, error)
 
 	CreateIngredientNutritionLink(ctx context.Context, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	UpdateIngredientNutritionLink(ctx context.Context, id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
