@@ -537,3 +537,18 @@ func TestSubmitNutritionLinkRejectsUnknownFood(t *testing.T) {
 		t.Fatalf("err = %v, want ErrFoodNotFound", err)
 	}
 }
+
+func TestApproveNutritionSuggestionRefusesDeletedFood(t *testing.T) {
+	store := foodStore(models.Recipe{})
+	store.getNutritionSuggestionByIdFn = func(string) (models.NutritionSuggestion, error) {
+		return models.NutritionSuggestion{IngredientName: "Crème", FoodID: "cream"}, nil
+	}
+	store.createIngredientNutritionLinkFn = func(string, string, *float64, *float64) (models.IngredientNutritionLink, error) {
+		t.Fatal("a link to a deleted food must not be created")
+		return models.IngredientNutritionLink{}, nil
+	}
+	_, err := (&Service{db: store}).ApproveNutritionSuggestion(context.Background(), primitive.NewObjectID().Hex(), primitive.NewObjectID().Hex())
+	if !errors.Is(err, ErrFoodNotFound) {
+		t.Fatalf("err = %v, want ErrFoodNotFound", err)
+	}
+}

@@ -64,6 +64,7 @@ type fakeStore struct {
 	getIngredientNutritionLinkByNameLowerFn func(nameLower string) (models.IngredientNutritionLink, error)
 	getUnitAliasByAliasLowerFn              func(aliasLower string) (models.UnitAlias, error)
 	listFoodsFn                             func() ([]models.FoodItem, error)
+	getNutritionSuggestionByIdFn            func(id string) (models.NutritionSuggestion, error)
 	createFoodFn                            func(food models.FoodItem) error
 	updateFoodFn                            func(food models.FoodItem) (models.FoodItem, error)
 	countLinksForFoodFn                     func(id string) (int64, error)
@@ -401,7 +402,10 @@ func (f *fakeStore) CreateNutritionSuggestion(_ context.Context, suggestion mode
 	suggestion.Id = &id
 	return suggestion, nil
 }
-func (f *fakeStore) GetNutritionSuggestionById(context.Context, string) (models.NutritionSuggestion, error) {
+func (f *fakeStore) GetNutritionSuggestionById(_ context.Context, id string) (models.NutritionSuggestion, error) {
+	if f.getNutritionSuggestionByIdFn != nil {
+		return f.getNutritionSuggestionByIdFn(id)
+	}
 	return models.NutritionSuggestion{}, nil
 }
 func (f *fakeStore) ListNutritionSuggestions(context.Context, string, int64, int64) ([]models.NutritionSuggestion, int64, error) {

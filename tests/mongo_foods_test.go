@@ -104,7 +104,7 @@ func TestAdminFoodAndUnitCRUD(t *testing.T) {
 
 // TestMigrateFoodsMovesSubstitutions covers moving Toolbox substitutions
 // onto foods: a matching one lands on the food in its source locale and
-// translations, an unmatched one is dropped, and a re-run adds nothing.
+// translations, an unmatched one is kept aside, and a re-run adds nothing.
 func TestMigrateFoodsMovesSubstitutions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -126,4 +126,7 @@ func TestMigrateFoodsMovesSubstitutions(t *testing.T) {
 	names, err := db.RawDatabase().ListCollectionNames(ctx, bson.M{"name": "toolbox_substitutions"})
 	require.NoError(t, err)
 	assert.Empty(t, names)
+	unmatched, err := db.RawDatabase().Collection("toolbox_substitutions_unmatched").CountDocuments(ctx, bson.M{"problem": "Too salty soup"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), unmatched, "an unmatched substitution is kept for an admin")
 }

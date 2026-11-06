@@ -26,6 +26,9 @@ const (
 	legacyToolboxIngredientsCollection = "toolbox_ingredients"
 	legacyToolboxSuggestionsCollection = "toolbox_suggestions"
 	legacySubstitutionsCollection      = "toolbox_substitutions"
+	// unmatchedSubstitutionsCollection keeps the substitutions
+	// MigrateFoods could not move onto a food.
+	unmatchedSubstitutionsCollection = "toolbox_substitutions_unmatched"
 )
 
 var FoodNotFoundError = errors.New("food not found")
@@ -121,7 +124,8 @@ func (c *Client) CountLinksForFood(ctx context.Context, id string) (int64, error
 
 // MigrateFoods seeds the food list when the collection is empty, then moves
 // data off the collections it replaces: Toolbox substitutions move onto the
-// food their problem names (see migrateSubstitutions); links and nutrition
+// food their problem names, or into toolbox_substitutions_unmatched (see
+// migrateSubstitutions); links and nutrition
 // suggestions
 // pointing at an old Ciqual entry are repointed at the food that entry was
 // folded into, or deleted (and logged) when it was dropped. The old
@@ -290,22 +294,43 @@ func substituteProblemFood(problem string, foods []models.FoodItem) string {
 	return ""
 }
 
-// migrateSubstitutions appends each Toolbox substitution's solution, in its
+// Limits on a food's substitutes, the same as the admin form's
+// (recipe_service maxFoodSubstitutes, maxSubstituteLength).
+const (
+	maxSubstitutes      = 10
+	maxSubstituteLength = 300
+)
+
+// mergeSubstitute adds line to lines unless it repeats one (ignoring case
+// and spaces); ok is false when line is too long or lines are full.
+func mergeSubstitute(lines []string, line string) ([]string, bool) {
+	line = strings.TrimSpace(line)
+	for _, l := range lines {
+		if strings.EqualFold(l, line) {
+			return lines, true
+		}
+	}
+	if len(line) > maxSubstituteLength || len(lines) >= maxSubstitutes {
+		return lines, false
+	}
+	return append(lines, line), true
+}
+
+// migrateSubstitutions adds each Toolbox substitution's solution, in its
 // source locale and every stored translation, to the substitutes of the
-// food its problem names. Unmatched ones are logged and left to be dropped.
+// food its problem names. A substitution with no matching food, or a line
+// over the limits, is copied whole into toolbox_substitutions_unmatched so
+// an admin can still re-enter it by hand.
 func (c *Client) migrateSubstitutions(ctx context.Context) error {
 	foods, err := c.ListFoods(ctx)
 	if err != nil {
 		return err
 	}
-	var items []struct {
-		Problem      string `bson:"problem"`
-		Solution     string `bson:"solution"`
-		SourceLocale string `bson:"source_locale"`
-		Translations map[string]struct {
-			Solution string `bson:"solution"`
-		} `bson:"translations"`
+	substitutes := make(map[string]map[string][]string, len(foods))
+	for _, food := range foods {
+		substitutes[food.Id] = food.Substitutes
 	}
+	var items []bson.M
 	cursor, err := c.db.Collection(legacySubstitutionsCollection).Find(ctx, bson.D{})
 	if err != nil {
 		return err
@@ -313,31 +338,57 @@ func (c *Client) migrateSubstitutions(ctx context.Context) error {
 	if err := cursor.All(ctx, &items); err != nil {
 		return err
 	}
-	for _, item := range items {
+	for _, raw := range items {
+		var item struct {
+			Problem      string `bson:"problem"`
+			Solution     string `bson:"solution"`
+			SourceLocale string `bson:"source_locale"`
+			Translations map[string]struct {
+				Solution string `bson:"solution"`
+			} `bson:"translations"`
+		}
+		encoded, err := bson.Marshal(raw)
+		if err != nil {
+			return err
+		}
+		if err := bson.Unmarshal(encoded, &item); err != nil {
+			return err
+		}
 		food := substituteProblemFood(item.Problem, foods)
-		if food == "" {
-			utils.LogError("Dropped a substitution with no matching food", nil, item.Problem)
-			continue
-		}
-		lines := bson.D{}
-		source := item.SourceLocale
-		if source == "" {
-			source = "en"
-		}
-		for _, locale := range models.FoodLocales {
-			text := item.Translations[locale].Solution
-			if locale == source {
-				text = item.Solution
+		kept := food != ""
+		set := bson.D{}
+		if kept {
+			source, _, _ := strings.Cut(item.SourceLocale, "-")
+			if source == "" {
+				source = "en"
 			}
-			if text = strings.TrimSpace(text); text != "" {
-				lines = append(lines, bson.E{Key: "substitutes." + locale, Value: text})
+			if substitutes[food] == nil {
+				substitutes[food] = map[string][]string{}
+			}
+			for _, locale := range models.FoodLocales {
+				text := item.Translations[locale].Solution
+				if locale == source {
+					text = item.Solution
+				}
+				if strings.TrimSpace(text) == "" {
+					continue
+				}
+				lines, ok := mergeSubstitute(substitutes[food][locale], text)
+				kept = kept && ok
+				substitutes[food][locale] = lines
+				set = append(set, bson.E{Key: "substitutes." + locale, Value: lines})
 			}
 		}
-		if len(lines) == 0 {
-			continue
+		if len(set) > 0 {
+			if _, err := c.db.Collection(foodsCollection).UpdateOne(ctx, bson.D{{Key: "_id", Value: food}}, bson.D{{Key: "$set", Value: set}}); err != nil {
+				return fmt.Errorf("move substitution %q: %w", item.Problem, err)
+			}
 		}
-		if _, err := c.db.Collection(foodsCollection).UpdateOne(ctx, bson.D{{Key: "_id", Value: food}}, bson.D{{Key: "$addToSet", Value: lines}}); err != nil {
-			return fmt.Errorf("move substitution %q: %w", item.Problem, err)
+		if !kept {
+			utils.LogError("Kept a substitution in toolbox_substitutions_unmatched", nil, item.Problem)
+			if _, err := c.db.Collection(unmatchedSubstitutionsCollection).ReplaceOne(ctx, bson.D{{Key: "_id", Value: raw["_id"]}}, raw, options.Replace().SetUpsert(true)); err != nil {
+				return fmt.Errorf("keep substitution %q: %w", item.Problem, err)
+			}
 		}
 	}
 	return nil

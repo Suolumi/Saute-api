@@ -394,6 +394,15 @@ func (s *Service) ApproveNutritionSuggestion(ctx context.Context, id, adminID st
 		}
 		return models.NutritionSuggestion{}, err
 	}
+	// The food or unit may have been deleted since submission.
+	if _, err := s.getFood(ctx, suggestion.FoodID); err != nil {
+		return models.NutritionSuggestion{}, err
+	}
+	if suggestion.UnitAlias != "" && suggestion.UnitID != nil {
+		if _, err := s.db.GetToolboxUnitById(ctx, suggestion.UnitID.Hex()); err != nil {
+			return models.NutritionSuggestion{}, unitError(err)
+		}
+	}
 
 	if suggestion.TargetID != nil {
 		if _, err := s.db.UpdateIngredientNutritionLink(ctx, suggestion.TargetID.Hex(), suggestion.IngredientName, suggestion.FoodID, suggestion.GPer100ml, suggestion.GramsPerUnit); err != nil {
