@@ -110,8 +110,8 @@ func TestMigrateFoodsMovesSubstitutions(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, db.MigrateFoods(ctx))
 	_, err := db.RawDatabase().Collection("toolbox_substitutions").InsertMany(ctx, []interface{}{
-		bson.M{"problem": "No buttermilk", "solution": "Milk with a spoon of lemon juice", "source_locale": "en",
-			"translations": bson.M{"fr": bson.M{"problem": "Pas de babeurre", "solution": "Du lait avec une cuillère de jus de citron"}}},
+		bson.M{"problem": "No butter", "solution": "Olive oil, three quarters of the amount", "source_locale": "en",
+			"translations": bson.M{"fr": bson.M{"problem": "Pas de beurre", "solution": "Huile d’olive, trois quarts de la quantité"}}},
 		bson.M{"problem": "Too salty soup", "solution": "Add a potato"},
 	})
 	require.NoError(t, err)
@@ -119,10 +119,10 @@ func TestMigrateFoodsMovesSubstitutions(t *testing.T) {
 	require.NoError(t, db.MigrateFoods(ctx))
 	require.NoError(t, db.MigrateFoods(ctx))
 
-	food, err := db.GetFoodById(ctx, "buttermilk")
+	food, err := db.GetFoodById(ctx, "butter")
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Milk with a spoon of lemon juice"}, food.Substitutes["en"])
-	assert.Equal(t, []string{"Du lait avec une cuillère de jus de citron"}, food.Substitutes["fr"])
+	assert.Equal(t, []string{"Olive oil, three quarters of the amount"}, food.Substitutes["en"])
+	assert.Equal(t, []string{"Huile d’olive, trois quarts de la quantité"}, food.Substitutes["fr"])
 	names, err := db.RawDatabase().ListCollectionNames(ctx, bson.M{"name": "toolbox_substitutions"})
 	require.NoError(t, err)
 	assert.Empty(t, names)
