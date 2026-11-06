@@ -3,7 +3,6 @@ package recipe_service
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -28,7 +27,7 @@ func TestResolveIngredientGramsWeightUnitNeedsNoDensity(t *testing.T) {
 	ingredient := models.Ingredient{Name: "Flour", Quantity: 200, Unit: "g"}
 	link := models.IngredientNutritionLink{Name: "Flour"}
 
-	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, []models.ToolboxUnit{gram}, map[string]float64{})
+	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, []models.ToolboxUnit{gram})
 	if !ok || grams != 200 {
 		t.Fatalf("got grams=%v ok=%v, want 200/true", grams, ok)
 	}
@@ -41,20 +40,7 @@ func TestResolveIngredientGramsVolumeUnitUsesLinkDensity(t *testing.T) {
 	ingredient := models.Ingredient{Name: "Milk", Quantity: 1, Unit: "cup"}
 	link := models.IngredientNutritionLink{Name: "Milk", GPer100ml: &density}
 
-	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, []models.ToolboxUnit{cup}, map[string]float64{})
-	want := 1 * 240 * 103.0 / 100
-	if !ok || grams != want {
-		t.Fatalf("got grams=%v ok=%v, want %v/true", grams, ok, want)
-	}
-}
-
-func TestResolveIngredientGramsVolumeUnitFallsBackToToolboxDensity(t *testing.T) {
-	s := &Service{db: &fakeStore{}}
-	cup := cupUnit()
-	ingredient := models.Ingredient{Name: "Milk", Quantity: 1, Unit: "cup"}
-	link := models.IngredientNutritionLink{Name: "Milk"} // no density of its own
-
-	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, []models.ToolboxUnit{cup}, map[string]float64{"milk": 103})
+	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, []models.ToolboxUnit{cup})
 	want := 1 * 240 * 103.0 / 100
 	if !ok || grams != want {
 		t.Fatalf("got grams=%v ok=%v, want %v/true", grams, ok, want)
@@ -67,7 +53,7 @@ func TestResolveIngredientGramsVolumeUnitWithNoDensityAnywhereIsUnresolved(t *te
 	ingredient := models.Ingredient{Name: "Milk", Quantity: 1, Unit: "cup"}
 	link := models.IngredientNutritionLink{Name: "Milk"}
 
-	_, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, []models.ToolboxUnit{cup}, map[string]float64{})
+	_, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, []models.ToolboxUnit{cup})
 	if ok {
 		t.Fatal("got ok=true, want false: no density available for a volume unit")
 	}
@@ -79,7 +65,7 @@ func TestResolveIngredientGramsBlankUnitUsesGramsPerUnit(t *testing.T) {
 	ingredient := models.Ingredient{Name: "Egg", Quantity: 3, Unit: ""}
 	link := models.IngredientNutritionLink{Name: "Egg", GramsPerUnit: &gpu}
 
-	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, nil, map[string]float64{})
+	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, nil)
 	if !ok || grams != 150 {
 		t.Fatalf("got grams=%v ok=%v, want 150/true", grams, ok)
 	}
@@ -92,7 +78,7 @@ func TestResolveIngredientGramsUnrecognizedUnitFallsBackToCount(t *testing.T) {
 	ingredient := models.Ingredient{Name: "Egg", Quantity: 2, Unit: "whole"} // "whole" matches no ToolboxUnit/alias
 	link := models.IngredientNutritionLink{Name: "Egg", GramsPerUnit: &gpu}
 
-	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, []models.ToolboxUnit{gram}, map[string]float64{})
+	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, []models.ToolboxUnit{gram})
 	if !ok || grams != 100 {
 		t.Fatalf("got grams=%v ok=%v, want 100/true", grams, ok)
 	}
@@ -103,7 +89,7 @@ func TestResolveIngredientGramsCountWithoutGramsPerUnitIsUnresolved(t *testing.T
 	ingredient := models.Ingredient{Name: "Egg", Quantity: 3, Unit: ""}
 	link := models.IngredientNutritionLink{Name: "Egg"}
 
-	_, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, nil, map[string]float64{})
+	_, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, nil)
 	if ok {
 		t.Fatal("got ok=true, want false: no GramsPerUnit supplied for a count-based ingredient")
 	}
@@ -114,7 +100,7 @@ func TestResolveIngredientGramsNoQuantityIsUnresolved(t *testing.T) {
 	ingredient := models.Ingredient{Name: "Salt", Quantity: 0, Unit: "g"}
 	link := models.IngredientNutritionLink{Name: "Salt"}
 
-	_, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, []models.ToolboxUnit{gramUnit()}, map[string]float64{})
+	_, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, []models.ToolboxUnit{gramUnit()})
 	if ok {
 		t.Fatal("got ok=true, want false: no quantity at all ('salt to taste')")
 	}
@@ -134,7 +120,7 @@ func TestResolveIngredientGramsUnitResolvesViaAlias(t *testing.T) {
 	ingredient := models.Ingredient{Name: "Sugar", Quantity: 2, Unit: "cuillère"}
 	link := models.IngredientNutritionLink{Name: "Sugar"}
 
-	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link, []models.ToolboxUnit{gram}, map[string]float64{})
+	grams, ok := s.resolveIngredientGrams(context.Background(), ingredient, link.GPer100ml, link.GramsPerUnit, []models.ToolboxUnit{gram})
 	if !ok || grams != 2 {
 		t.Fatalf("got grams=%v ok=%v, want 2/true", grams, ok)
 	}
@@ -143,7 +129,7 @@ func TestResolveIngredientGramsUnitResolvesViaAlias(t *testing.T) {
 func TestGetRecipeNutritionScalesByServingsAndReportsCoverage(t *testing.T) {
 	gram := gramUnit()
 	recipeID := primitive.NewObjectID()
-	nutritionID := primitive.NewObjectID()
+	foodID := "flour"
 	recipe := models.Recipe{
 		Id: &recipeID, Quantity: 4,
 		Ingredients: []models.Ingredient{
@@ -156,15 +142,12 @@ func TestGetRecipeNutritionScalesByServingsAndReportsCoverage(t *testing.T) {
 		listToolboxUnitsFn: func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{gram}, nil },
 		getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
 			if nameLower == "flour" {
-				return models.IngredientNutritionLink{Name: "Flour", NutritionID: nutritionID}, nil
+				return models.IngredientNutritionLink{Name: "Flour", FoodID: foodID}, nil
 			}
 			return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
 		},
-		getNutritionIngredientByIdFn: func(id string) (models.NutritionIngredient, error) {
-			if id == nutritionID.Hex() {
-				return models.NutritionIngredient{Id: &nutritionID, Name: "Wheat flour", KcalPer100g: 350, ProteinG: 10, CarbsG: 70, FatG: 1, SaltG: 0, SugarG: 0}, nil
-			}
-			return models.NutritionIngredient{}, errors.New("not found")
+		listFoodsFn: func() ([]models.FoodItem, error) {
+			return []models.FoodItem{{Id: foodID, KcalPer100g: 350, ProteinG: 10, CarbsG: 70, FatG: 1}}, nil
 		},
 	}
 	s := &Service{db: store}
@@ -207,23 +190,23 @@ func TestGetRecipeNutritionDefaultsServingsToRecipeQuantity(t *testing.T) {
 }
 
 func TestSubmitNutritionLinkSuggestionAppliesDirectlyForAFreshName(t *testing.T) {
-	nutritionID := primitive.NewObjectID()
+	foodID := "flour"
 	created := false
 	store := &fakeStore{
-		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		listFoodsFn: func() ([]models.FoodItem, error) { return []models.FoodItem{{Id: foodID}}, nil },
 		// default getIngredientNutritionLinkByNameLowerFn (unset) returns NotFound - a fresh name.
 	}
-	store.createIngredientNutritionLinkFn = func(name string, nid primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+	store.createIngredientNutritionLinkFn = func(name string, nid string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
 		created = true
 		id := primitive.NewObjectID()
-		return models.IngredientNutritionLink{Id: &id, Name: name, NutritionID: nid}, nil
+		return models.IngredientNutritionLink{Id: &id, Name: name, FoodID: nid}, nil
 	}
 	s := &Service{db: store}
 	userID := primitive.NewObjectID().Hex()
 
 	gramsPerUnit := 50.0
 	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: nutritionID.Hex(), GramsPerUnit: &gramsPerUnit,
+		IngredientName: "Flour", FoodID: foodID, GramsPerUnit: &gramsPerUnit,
 	})
 	if err != nil {
 		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
@@ -237,10 +220,10 @@ func TestSubmitNutritionLinkSuggestionAppliesDirectlyForAFreshName(t *testing.T)
 }
 
 func TestSubmitNutritionLinkSuggestionBecomesCorrectionOnNameMatch(t *testing.T) {
-	nutritionID := primitive.NewObjectID()
+	foodID := "flour"
 	existingLinkID := primitive.NewObjectID()
 	store := &fakeStore{
-		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		listFoodsFn: func() ([]models.FoodItem, error) { return []models.FoodItem{{Id: foodID}}, nil },
 		getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
 			if nameLower == "flour" {
 				return models.IngredientNutritionLink{Id: &existingLinkID, Name: "Flour"}, nil
@@ -253,7 +236,7 @@ func TestSubmitNutritionLinkSuggestionBecomesCorrectionOnNameMatch(t *testing.T)
 
 	gramsPerUnit := 50.0
 	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: nutritionID.Hex(), GramsPerUnit: &gramsPerUnit,
+		IngredientName: "Flour", FoodID: foodID, GramsPerUnit: &gramsPerUnit,
 	})
 	if err != nil {
 		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
@@ -267,17 +250,17 @@ func TestSubmitNutritionLinkSuggestionBecomesCorrectionOnNameMatch(t *testing.T)
 }
 
 func TestSubmitNutritionLinkSuggestionRejectsVolumeUnitWithoutDensity(t *testing.T) {
-	nutritionID := primitive.NewObjectID()
+	foodID := "flour"
 	cup := cupUnit()
 	store := &fakeStore{
-		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
-		listToolboxUnitsFn:           func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{cup}, nil },
+		listFoodsFn:        func() ([]models.FoodItem, error) { return []models.FoodItem{{Id: foodID}}, nil },
+		listToolboxUnitsFn: func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{cup}, nil },
 	}
 	s := &Service{db: store}
 	userID := primitive.NewObjectID().Hex()
 
 	_, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Milk", IngredientUnit: "cup", NutritionID: nutritionID.Hex(),
+		IngredientName: "Milk", IngredientUnit: "cup", FoodID: foodID,
 	})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("SubmitNutritionLinkSuggestion err = %v, want ErrInvalid (a volume unit needs a density)", err)
@@ -285,17 +268,17 @@ func TestSubmitNutritionLinkSuggestionRejectsVolumeUnitWithoutDensity(t *testing
 }
 
 func TestSubmitNutritionLinkSuggestionWeightUnitNeedsNeitherField(t *testing.T) {
-	nutritionID := primitive.NewObjectID()
+	foodID := "flour"
 	gram := gramUnit()
 	store := &fakeStore{
-		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
-		listToolboxUnitsFn:           func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{gram}, nil },
+		listFoodsFn:        func() ([]models.FoodItem, error) { return []models.FoodItem{{Id: foodID}}, nil },
+		listToolboxUnitsFn: func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{gram}, nil },
 	}
 	s := &Service{db: store}
 	userID := primitive.NewObjectID().Hex()
 
 	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", IngredientUnit: "g", NutritionID: nutritionID.Hex(),
+		IngredientName: "Flour", IngredientUnit: "g", FoodID: foodID,
 	})
 	if err != nil {
 		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
@@ -306,23 +289,23 @@ func TestSubmitNutritionLinkSuggestionWeightUnitNeedsNeitherField(t *testing.T) 
 }
 
 func TestSubmitNutritionLinkSuggestionFillingAnEmptyFieldAppliesDirectly(t *testing.T) {
-	nutritionID := primitive.NewObjectID()
+	foodID := "flour"
 	existingLinkID := primitive.NewObjectID()
 	existingGramsPerUnit := 90.0
 	var gotGPer100ml, gotGramsPerUnit *float64
 	updateCalled := false
 	store := &fakeStore{
-		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		listFoodsFn: func() ([]models.FoodItem, error) { return []models.FoodItem{{Id: foodID}}, nil },
 		getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
 			if nameLower == "crème fraîche" {
-				return models.IngredientNutritionLink{Id: &existingLinkID, Name: "Crème fraîche", NutritionID: nutritionID, GramsPerUnit: &existingGramsPerUnit}, nil
+				return models.IngredientNutritionLink{Id: &existingLinkID, Name: "Crème fraîche", FoodID: foodID, GramsPerUnit: &existingGramsPerUnit}, nil
 			}
 			return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
 		},
-		updateIngredientNutritionLinkFn: func(id, name string, nid primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+		updateIngredientNutritionLinkFn: func(id, name string, nid string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
 			updateCalled = true
 			gotGPer100ml, gotGramsPerUnit = gPer100ml, gramsPerUnit
-			return models.IngredientNutritionLink{Id: &existingLinkID, Name: name, NutritionID: nid, GPer100ml: gPer100ml, GramsPerUnit: gramsPerUnit}, nil
+			return models.IngredientNutritionLink{Id: &existingLinkID, Name: name, FoodID: nid, GPer100ml: gPer100ml, GramsPerUnit: gramsPerUnit}, nil
 		},
 	}
 	s := &Service{db: store}
@@ -330,7 +313,7 @@ func TestSubmitNutritionLinkSuggestionFillingAnEmptyFieldAppliesDirectly(t *test
 
 	newDensity := 100.0
 	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Crème fraîche", NutritionID: nutritionID.Hex(), GPer100ml: &newDensity,
+		IngredientName: "Crème fraîche", FoodID: foodID, GPer100ml: &newDensity,
 	})
 	if err != nil {
 		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
@@ -350,23 +333,23 @@ func TestSubmitNutritionLinkSuggestionFillingAnEmptyFieldAppliesDirectly(t *test
 }
 
 func TestSubmitNutritionLinkSuggestionOverwritingAnExistingFieldRequiresReview(t *testing.T) {
-	nutritionID := primitive.NewObjectID()
+	foodID := "flour"
 	existingLinkID := primitive.NewObjectID()
 	existingDensity := 92.0
 	existingGramsPerUnit := 15.0
 	store := &fakeStore{
-		getNutritionIngredientByIdFn: func(string) (models.NutritionIngredient, error) { return models.NutritionIngredient{}, nil },
+		listFoodsFn: func() ([]models.FoodItem, error) { return []models.FoodItem{{Id: foodID}}, nil },
 		getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
 			if nameLower == "olive oil" {
-				return models.IngredientNutritionLink{Id: &existingLinkID, Name: "Olive oil", NutritionID: nutritionID, GPer100ml: &existingDensity, GramsPerUnit: &existingGramsPerUnit}, nil
+				return models.IngredientNutritionLink{Id: &existingLinkID, Name: "Olive oil", FoodID: foodID, GPer100ml: &existingDensity, GramsPerUnit: &existingGramsPerUnit}, nil
 			}
 			return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
 		},
-		createIngredientNutritionLinkFn: func(string, primitive.ObjectID, *float64, *float64) (models.IngredientNutritionLink, error) {
+		createIngredientNutritionLinkFn: func(string, string, *float64, *float64) (models.IngredientNutritionLink, error) {
 			t.Fatal("CreateIngredientNutritionLink should not be called when the submission needs review")
 			return models.IngredientNutritionLink{}, nil
 		},
-		updateIngredientNutritionLinkFn: func(string, string, primitive.ObjectID, *float64, *float64) (models.IngredientNutritionLink, error) {
+		updateIngredientNutritionLinkFn: func(string, string, string, *float64, *float64) (models.IngredientNutritionLink, error) {
 			t.Fatal("UpdateIngredientNutritionLink should not be called when the submission needs review")
 			return models.IngredientNutritionLink{}, nil
 		},
@@ -376,7 +359,7 @@ func TestSubmitNutritionLinkSuggestionOverwritingAnExistingFieldRequiresReview(t
 
 	newDensity := 105.0
 	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), userID, models.SubmitNutritionLinkRequest{
-		IngredientName: "Olive oil", NutritionID: nutritionID.Hex(), GPer100ml: &newDensity,
+		IngredientName: "Olive oil", FoodID: foodID, GPer100ml: &newDensity,
 	})
 	if err != nil {
 		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
@@ -393,10 +376,10 @@ func TestSubmitNutritionLinkSuggestionOverwritingAnExistingFieldRequiresReview(t
 }
 
 // sugarLinkedStore returns a fakeStore where "Sugar" resolves to a linked
-// NutritionIngredient at 400 kcal/100g.
+// food at 400 kcal/100g.
 func sugarLinkedStore(recipesByID map[string]models.Recipe) *fakeStore {
 	gram := gramUnit()
-	sugarNutritionID := primitive.NewObjectID()
+
 	return &fakeStore{
 		getRecipeByIdFn: func(id string) (models.Recipe, error) {
 			if r, ok := recipesByID[id]; ok {
@@ -407,15 +390,12 @@ func sugarLinkedStore(recipesByID map[string]models.Recipe) *fakeStore {
 		listToolboxUnitsFn: func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{gram}, nil },
 		getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
 			if nameLower == "sugar" {
-				return models.IngredientNutritionLink{Name: "Sugar", NutritionID: sugarNutritionID}, nil
+				return models.IngredientNutritionLink{Name: "Sugar", FoodID: "sugar"}, nil
 			}
 			return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
 		},
-		getNutritionIngredientByIdFn: func(id string) (models.NutritionIngredient, error) {
-			if id == sugarNutritionID.Hex() {
-				return models.NutritionIngredient{Id: &sugarNutritionID, Name: "Sugar", KcalPer100g: 400}, nil
-			}
-			return models.NutritionIngredient{}, errors.New("not found")
+		listFoodsFn: func() ([]models.FoodItem, error) {
+			return []models.FoodItem{{Id: "sugar", KcalPer100g: 400}}, nil
 		},
 	}
 }
@@ -447,18 +427,113 @@ func TestGetRecipeNutritionIgnoresRecipeRef(t *testing.T) {
 	}
 }
 
-func TestToolboxDensityByNameUsesSourceLocaleTranslation(t *testing.T) {
-	items := []models.ToolboxIngredient{
-		{Name: "Milk", NameLower: "milk", GPer100ml: 103, Translations: map[string]models.ToolboxIngredientTranslation{
-			"zh": {Name: "牛奶"}, "fr": {Name: "Lait"},
-		}},
-		{Name: "Honey", NameLower: "honey", GPer100ml: 142, Translations: map[string]models.ToolboxIngredientTranslation{
-			"zh": {Name: "Milk"},
-		}},
+func ptr(v float64) *float64 { return &v }
+
+// foodStore returns a fakeStore with gram and cup units, recipe, and two
+// foods: egg (50 g a piece, aliases "eggs"/"oeufs") and honey (141 g/100ml).
+func foodStore(recipe models.Recipe) *fakeStore {
+	gram, cup := gramUnit(), cupUnit()
+	return &fakeStore{
+		getRecipeByIdFn:    func(string) (models.Recipe, error) { return recipe, nil },
+		listToolboxUnitsFn: func() ([]models.ToolboxUnit, error) { return []models.ToolboxUnit{gram, cup}, nil },
+		listFoodsFn: func() ([]models.FoodItem, error) {
+			return []models.FoodItem{
+				{Id: "egg", Names: map[string]string{"en": "Egg", "fr": "Œuf"}, Aliases: map[string][]string{"en": {"eggs"}, "fr": {"oeufs"}},
+					GramsPerPiece: ptr(50), KcalPer100g: 140},
+				{Id: "honey", Names: map[string]string{"en": "Honey", "fr": "Miel"}, GPer100ml: ptr(141), KcalPer100g: 300},
+			}, nil
+		},
 	}
-	got := toolboxDensityByName(items, "zh")
-	want := map[string]float64{"milk": 103, "honey": 142, "牛奶": 103}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("toolboxDensityByName = %v, want %v", got, want)
+}
+
+func recipeWith(locale string, ingredients ...models.Ingredient) models.Recipe {
+	id := primitive.NewObjectID()
+	return models.Recipe{Id: &id, Quantity: 1, SourceLocale: locale, Ingredients: ingredients}
+}
+
+func TestRecipeNutritionAutoMatchesFoodByAliasWithItsDefaultGramsPerPiece(t *testing.T) {
+	recipe := recipeWith("en", models.Ingredient{Name: "Eggs ", Quantity: 2})
+	s := &Service{db: foodStore(recipe)}
+
+	got, err := s.GetRecipeNutrition(context.Background(), recipe.Id.Hex(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 x 50 g at 140 kcal/100g.
+	if got.MatchedCount != 1 || got.Kcal != 140 {
+		t.Fatalf("got %+v, want matched=1 kcal=140", got)
+	}
+}
+
+func TestRecipeNutritionVolumeUsesFoodDensity(t *testing.T) {
+	recipe := recipeWith("fr", models.Ingredient{Name: "miel", Quantity: 1, Unit: "cup"})
+	s := &Service{db: foodStore(recipe)}
+
+	got, err := s.GetRecipeNutrition(context.Background(), recipe.Id.Hex(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 240 ml x 1.41 g/ml = 338.4 g at 300 kcal/100g.
+	if got.Kcal != 1015.2 {
+		t.Fatalf("got kcal=%v, want 1015.2", got.Kcal)
+	}
+}
+
+func TestRecipeNutritionLinkOverrideBeatsFoodDefault(t *testing.T) {
+	recipe := recipeWith("en", models.Ingredient{Name: "Big egg", Quantity: 1})
+	store := foodStore(recipe)
+	store.getIngredientNutritionLinkByNameLowerFn = func(nameLower string) (models.IngredientNutritionLink, error) {
+		if nameLower == "big egg" {
+			return models.IngredientNutritionLink{Name: "Big egg", FoodID: "egg", GramsPerUnit: ptr(100)}, nil
+		}
+		return models.IngredientNutritionLink{}, mongorepo.NutritionEntryNotFoundError
+	}
+	s := &Service{db: store}
+
+	got, err := s.GetRecipeNutrition(context.Background(), recipe.Id.Hex(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kcal != 140 {
+		t.Fatalf("got kcal=%v, want 140 (the link's 100 g a piece)", got.Kcal)
+	}
+}
+
+func TestRecipeNutritionIgnoresNamesFromOtherLocales(t *testing.T) {
+	recipe := recipeWith("fr", models.Ingredient{Name: "eggs", Quantity: 2})
+	s := &Service{db: foodStore(recipe)}
+
+	got, err := s.GetRecipeNutrition(context.Background(), recipe.Id.Hex(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MatchedCount != 0 {
+		t.Fatalf("got matched=%d, want 0: \"eggs\" is English, the recipe French", got.MatchedCount)
+	}
+}
+
+func TestSubmitNutritionLinkNeedsNoNumberWhenFoodHasDefault(t *testing.T) {
+	store := foodStore(models.Recipe{})
+	s := &Service{db: store}
+
+	result, err := s.SubmitNutritionLinkSuggestion(context.Background(), primitive.NewObjectID().Hex(), models.SubmitNutritionLinkRequest{
+		IngredientName: "Gros oeuf", FoodID: "egg",
+	})
+	if err != nil {
+		t.Fatalf("SubmitNutritionLinkSuggestion: %v", err)
+	}
+	if !result.Applied {
+		t.Fatalf("got %+v, want applied", result)
+	}
+}
+
+func TestSubmitNutritionLinkRejectsUnknownFood(t *testing.T) {
+	s := &Service{db: foodStore(models.Recipe{})}
+
+	_, err := s.SubmitNutritionLinkSuggestion(context.Background(), primitive.NewObjectID().Hex(), models.SubmitNutritionLinkRequest{
+		IngredientName: "Thing", FoodID: "nope", GramsPerUnit: ptr(1),
+	})
+	if !errors.Is(err, ErrFoodNotFound) {
+		t.Fatalf("err = %v, want ErrFoodNotFound", err)
 	}
 }

@@ -31,13 +31,6 @@
         "to_base": 1
       }
     ],
-    "toolbox_ingredients": [
-      {
-        "id": "000000000000000000000c01",
-        "name": "Butter",
-        "g_per_100ml": 91
-      }
-    ],
     "unit_aliases": [
       {
         "id": "000000000000000000000d01",
@@ -49,50 +42,59 @@
       {
         "id": "000000000000000000000e01",
         "name": "Flour",
-        "nutrition_id": "000000000000000000000f01"
+        "food_id": "flour"
       },
       {
         "id": "000000000000000000000e02",
         "name": "Milk",
-        "nutrition_id": "000000000000000000000f02",
-        "g_per_100ml": 103
+        "g_per_100ml": 103,
+        "food_id": "milk"
       },
       {
         "id": "000000000000000000000e03",
         "name": "Egg",
-        "nutrition_id": "000000000000000000000f03",
-        "grams_per_unit": 50
+        "grams_per_unit": 50,
+        "food_id": "egg"
       },
       {
         "id": "000000000000000000000e04",
         "name": "Sugar",
-        "nutrition_id": "000000000000000000000f04"
+        "food_id": "sugar"
       },
       {
         "id": "000000000000000000000e05",
         "name": "Butter",
-        "nutrition_id": "000000000000000000000f05"
+        "food_id": "butter"
       },
       {
         "id": "000000000000000000000e06",
         "name": "Honey",
-        "nutrition_id": "000000000000000000000f04"
+        "food_id": "sugar"
       },
       {
         "id": "000000000000000000000e07",
         "name": "Onion",
-        "nutrition_id": "000000000000000000000f04"
+        "food_id": "sugar"
       },
       {
         "id": "000000000000000000000e08",
         "name": "Mystery",
-        "nutrition_id": "000000000000000000000f99"
+        "food_id": "missing-food"
       }
     ],
     "foods": [
       {
-        "id": "000000000000000000000f01",
-        "name": "Wheat flour",
+        "id": "flour",
+        "names": {
+          "en": "Wheat flour",
+          "fr": "Farine de blé"
+        },
+        "aliases": {
+          "en": [],
+          "fr": [
+            "farine"
+          ]
+        },
         "kcal_per_100g": 350,
         "protein_g_per_100g": 10,
         "carbs_g_per_100g": 70,
@@ -101,8 +103,18 @@
         "sugar_g_per_100g": 0.5
       },
       {
-        "id": "000000000000000000000f02",
-        "name": "Whole milk",
+        "id": "milk",
+        "names": {
+          "en": "Whole milk",
+          "fr": "Lait entier"
+        },
+        "aliases": {
+          "en": [],
+          "fr": [
+            "lait"
+          ]
+        },
+        "g_per_100ml": 100,
         "kcal_per_100g": 64,
         "protein_g_per_100g": 3.3,
         "carbs_g_per_100g": 4.8,
@@ -111,8 +123,20 @@
         "sugar_g_per_100g": 4.8
       },
       {
-        "id": "000000000000000000000f03",
-        "name": "Egg, raw",
+        "id": "egg",
+        "names": {
+          "en": "Egg, raw",
+          "fr": "Œuf"
+        },
+        "aliases": {
+          "en": [
+            "eggs"
+          ],
+          "fr": [
+            "oeufs"
+          ]
+        },
+        "grams_per_piece": 60,
         "kcal_per_100g": 143,
         "protein_g_per_100g": 12.6,
         "carbs_g_per_100g": 0.7,
@@ -121,8 +145,15 @@
         "sugar_g_per_100g": 0.4
       },
       {
-        "id": "000000000000000000000f04",
-        "name": "White sugar",
+        "id": "sugar",
+        "names": {
+          "en": "White sugar",
+          "fr": "Sucre"
+        },
+        "aliases": {
+          "en": [],
+          "fr": []
+        },
         "kcal_per_100g": 400,
         "protein_g_per_100g": 0,
         "carbs_g_per_100g": 100,
@@ -131,8 +162,16 @@
         "sugar_g_per_100g": 100
       },
       {
-        "id": "000000000000000000000f05",
-        "name": "Butter",
+        "id": "butter",
+        "names": {
+          "en": "Butter",
+          "fr": "Beurre"
+        },
+        "aliases": {
+          "en": [],
+          "fr": []
+        },
+        "g_per_100ml": 91,
         "kcal_per_100g": 717,
         "protein_g_per_100g": 0.9,
         "carbs_g_per_100g": 0.1,
@@ -244,7 +283,7 @@
       }
     },
     {
-      "name": "toolbox density fallback, volume without any density, servings 0 means base",
+      "name": "food density, volume without any density, servings 0 means base",
       "recipe": {
         "quantity": 1,
         "ingredients": [
@@ -358,7 +397,7 @@
       }
     },
     {
-      "name": "unit alias, padded unit, zero quantity, recipe reference, missing food, untrimmed name",
+      "name": "unit alias, padded unit, zero quantity, recipe reference, missing food, padded name",
       "recipe": {
         "quantity": 2,
         "ingredients": [
@@ -398,13 +437,13 @@
       "servings": 2,
       "expected": {
         "servings": 2,
-        "kcal": 170,
-        "protein_g": 0,
-        "carbs_g": 42.5,
-        "fat_g": 0,
+        "kcal": 520,
+        "protein_g": 10,
+        "carbs_g": 112.5,
+        "fat_g": 1,
         "salt_g": 0,
-        "sugar_g": 42.5,
-        "matched_count": 2,
+        "sugar_g": 43,
+        "matched_count": 3,
         "total_count": 6,
         "ingredients": [
           {
@@ -453,13 +492,13 @@
             "sugar_g": 0
           },
           {
-            "matched": false,
-            "kcal": 0,
-            "protein_g": 0,
-            "carbs_g": 0,
-            "fat_g": 0,
+            "matched": true,
+            "kcal": 350,
+            "protein_g": 10,
+            "carbs_g": 70,
+            "fat_g": 1,
             "salt_g": 0,
-            "sugar_g": 0
+            "sugar_g": 0.5
           }
         ]
       }
@@ -524,6 +563,85 @@
             "fat_g": 24.6,
             "salt_g": 0,
             "sugar_g": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "french recipe: alias match with the food default per piece, link override wins, English alias ignored, food density",
+      "recipe": {
+        "quantity": 2,
+        "source_locale": "fr",
+        "ingredients": [
+          {
+            "name": "oeufs",
+            "quantity": 2,
+            "unit": ""
+          },
+          {
+            "name": "Egg",
+            "quantity": 1,
+            "unit": ""
+          },
+          {
+            "name": "eggs",
+            "quantity": 2,
+            "unit": ""
+          },
+          {
+            "name": "Lait",
+            "quantity": 0.5,
+            "unit": "cup"
+          }
+        ]
+      },
+      "servings": 2,
+      "expected": {
+        "servings": 2,
+        "kcal": 319.9,
+        "protein_g": 25.4,
+        "carbs_g": 7,
+        "fat_g": 20.5,
+        "salt_g": 0.7,
+        "sugar_g": 6.4,
+        "matched_count": 3,
+        "total_count": 4,
+        "ingredients": [
+          {
+            "matched": true,
+            "kcal": 171.6,
+            "protein_g": 15.1,
+            "carbs_g": 0.8,
+            "fat_g": 11.4,
+            "salt_g": 0.4,
+            "sugar_g": 0.5
+          },
+          {
+            "matched": true,
+            "kcal": 71.5,
+            "protein_g": 6.3,
+            "carbs_g": 0.4,
+            "fat_g": 4.8,
+            "salt_g": 0.2,
+            "sugar_g": 0.2
+          },
+          {
+            "matched": false,
+            "kcal": 0,
+            "protein_g": 0,
+            "carbs_g": 0,
+            "fat_g": 0,
+            "salt_g": 0,
+            "sugar_g": 0
+          },
+          {
+            "matched": true,
+            "kcal": 76.8,
+            "protein_g": 4,
+            "carbs_g": 5.8,
+            "fat_g": 4.3,
+            "salt_g": 0.1,
+            "sugar_g": 5.8
           }
         ]
       }

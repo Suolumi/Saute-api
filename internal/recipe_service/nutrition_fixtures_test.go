@@ -19,11 +19,10 @@ import (
 // expected values.
 type nutritionFixtureFile struct {
 	Data struct {
-		Units              []models.ToolboxUnit             `json:"units"`
-		ToolboxIngredients []models.ToolboxIngredient       `json:"toolbox_ingredients"`
-		UnitAliases        []models.UnitAlias               `json:"unit_aliases"`
-		Links              []models.IngredientNutritionLink `json:"links"`
-		Foods              []models.NutritionIngredient     `json:"foods"`
+		Units       []models.ToolboxUnit             `json:"units"`
+		UnitAliases []models.UnitAlias               `json:"unit_aliases"`
+		Links       []models.IngredientNutritionLink `json:"links"`
+		Foods       []models.FoodItem                `json:"foods"`
 	} `json:"data"`
 	Cases []struct {
 		Name     string                  `json:"name"`
@@ -43,9 +42,6 @@ func TestGetRecipeNutritionSharedFixtures(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := fixtures.Data
-	for i := range data.ToolboxIngredients {
-		data.ToolboxIngredients[i].NameLower = strings.ToLower(data.ToolboxIngredients[i].Name)
-	}
 
 	for _, tc := range fixtures.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
@@ -53,9 +49,9 @@ func TestGetRecipeNutritionSharedFixtures(t *testing.T) {
 			recipe := tc.Recipe
 			recipe.Id = &recipeID
 			store := &fakeStore{
-				getRecipeByIdFn:          func(string) (models.Recipe, error) { return recipe, nil },
-				listToolboxUnitsFn:       func() ([]models.ToolboxUnit, error) { return data.Units, nil },
-				listToolboxIngredientsFn: func() ([]models.ToolboxIngredient, error) { return data.ToolboxIngredients, nil },
+				getRecipeByIdFn:    func(string) (models.Recipe, error) { return recipe, nil },
+				listToolboxUnitsFn: func() ([]models.ToolboxUnit, error) { return data.Units, nil },
+				listFoodsFn:        func() ([]models.FoodItem, error) { return data.Foods, nil },
 				getIngredientNutritionLinkByNameLowerFn: func(nameLower string) (models.IngredientNutritionLink, error) {
 					for _, link := range data.Links {
 						if strings.ToLower(link.Name) == nameLower {
@@ -71,14 +67,6 @@ func TestGetRecipeNutritionSharedFixtures(t *testing.T) {
 						}
 					}
 					return models.UnitAlias{}, mongorepo.NutritionEntryNotFoundError
-				},
-				getNutritionIngredientByIdFn: func(id string) (models.NutritionIngredient, error) {
-					for _, food := range data.Foods {
-						if food.Id != nil && food.Id.Hex() == id {
-							return food, nil
-						}
-					}
-					return models.NutritionIngredient{}, mongorepo.NutritionEntryNotFoundError
 				},
 			}
 			s := &Service{db: store}

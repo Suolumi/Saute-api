@@ -16,115 +16,11 @@ import (
 )
 
 const (
-	toolboxIngredientsCollection   = "toolbox_ingredients"
 	toolboxUnitsCollection         = "toolbox_units"
 	toolboxSubstitutionsCollection = "toolbox_substitutions"
-	toolboxSuggestionsCollection   = "toolbox_suggestions"
 )
 
 var ToolboxEntryNotFoundError = errors.New("toolbox entry not found")
-var ToolboxSuggestionNotFoundError = errors.New("toolbox suggestion not found")
-
-// --- Ingredients ---
-
-func (c *Client) CreateToolboxIngredient(ctx context.Context, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error) {
-	entry := models.ToolboxIngredient{
-		Name: name, NameLower: strings.ToLower(name), GPer100ml: gPer100ml, Note: note, CreatedAt: time.Now().UTC(),
-	}
-	result, err := c.db.Collection(toolboxIngredientsCollection).InsertOne(ctx, entry)
-	if err != nil {
-		return models.ToolboxIngredient{}, err
-	}
-	id := result.InsertedID.(primitive.ObjectID)
-	entry.Id = &id
-	return entry, nil
-}
-
-func (c *Client) UpdateToolboxIngredient(ctx context.Context, id string, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return models.ToolboxIngredient{}, ToolboxEntryNotFoundError
-	}
-	set := bson.D{
-		{Key: "name", Value: name}, {Key: "name_lower", Value: strings.ToLower(name)},
-		{Key: "g_per_100ml", Value: gPer100ml}, {Key: "note", Value: note},
-	}
-	var updated models.ToolboxIngredient
-	err = c.db.Collection(toolboxIngredientsCollection).FindOneAndUpdate(ctx,
-		bson.D{{Key: "_id", Value: objectID}}, bson.D{{Key: "$set", Value: set}},
-		options.FindOneAndUpdate().SetReturnDocument(options.After)).Decode(&updated)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.ToolboxIngredient{}, ToolboxEntryNotFoundError
-		}
-		return models.ToolboxIngredient{}, err
-	}
-	return updated, nil
-}
-
-func (c *Client) ListToolboxIngredients(ctx context.Context) ([]models.ToolboxIngredient, error) {
-	cursor, err := c.db.Collection(toolboxIngredientsCollection).Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "name", Value: 1}}))
-	if err != nil {
-		return nil, err
-	}
-	items := []models.ToolboxIngredient{}
-	if err := cursor.All(ctx, &items); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-func (c *Client) GetToolboxIngredientById(ctx context.Context, id string) (models.ToolboxIngredient, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return models.ToolboxIngredient{}, ToolboxEntryNotFoundError
-	}
-	var item models.ToolboxIngredient
-	err = c.db.Collection(toolboxIngredientsCollection).FindOne(ctx, bson.D{{Key: "_id", Value: objectID}}).Decode(&item)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.ToolboxIngredient{}, ToolboxEntryNotFoundError
-		}
-		return models.ToolboxIngredient{}, err
-	}
-	return item, nil
-}
-
-// SetToolboxIngredientTranslations stamps an ingredient's detected source
-// locale and its full set of machine translations, replacing whatever was
-// there before - translate-on-write always regenerates every configured
-// target locale in one pass, so there's never a partial map to merge.
-func (c *Client) SetToolboxIngredientTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return ToolboxEntryNotFoundError
-	}
-	set := bson.D{{Key: "source_locale", Value: sourceLocale}, {Key: "translations", Value: translations}}
-	result, err := c.db.Collection(toolboxIngredientsCollection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: objectID}}, bson.D{{Key: "$set", Value: set}})
-	if err != nil {
-		return err
-	}
-	if result.MatchedCount == 0 {
-		return ToolboxEntryNotFoundError
-	}
-	return nil
-}
-
-// GetToolboxIngredientByNameLower looks up an existing ingredient by
-// case-insensitive name, for suggestion duplicate detection.
-// ToolboxEntryNotFoundError means "no existing match" (a new entry).
-func (c *Client) GetToolboxIngredientByNameLower(ctx context.Context, nameLower string) (models.ToolboxIngredient, error) {
-	var item models.ToolboxIngredient
-	err := c.db.Collection(toolboxIngredientsCollection).FindOne(ctx, bson.D{{Key: "name_lower", Value: nameLower}}).Decode(&item)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.ToolboxIngredient{}, ToolboxEntryNotFoundError
-		}
-		return models.ToolboxIngredient{}, err
-	}
-	return item, nil
-}
 
 // --- Units ---
 
@@ -191,7 +87,8 @@ func (c *Client) GetToolboxUnitById(ctx context.Context, id string) (models.Tool
 	return item, nil
 }
 
-// SetToolboxUnitTranslations is SetToolboxIngredientTranslations for units.
+// SetToolboxUnitTranslations stamps a unit's detected source locale and
+// replaces its translations.
 func (c *Client) SetToolboxUnitTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error {
 	objectID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -283,8 +180,8 @@ func (c *Client) GetToolboxSubstitutionById(ctx context.Context, id string) (mod
 	return item, nil
 }
 
-// SetToolboxSubstitutionTranslations is SetToolboxIngredientTranslations
-// for substitutions.
+// SetToolboxSubstitutionTranslations is SetToolboxUnitTranslations for
+// substitutions.
 func (c *Client) SetToolboxSubstitutionTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error {
 	objectID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
@@ -316,117 +213,13 @@ func (c *Client) GetToolboxSubstitutionByProblemLower(ctx context.Context, probl
 	return item, nil
 }
 
-// --- Suggestions ---
-
-// CreateToolboxSuggestion inserts a new pending suggestion, stamping
-// Status/CreatedAt server-side regardless of what the caller set.
-func (c *Client) CreateToolboxSuggestion(ctx context.Context, suggestion models.ToolboxSuggestion) (models.ToolboxSuggestion, error) {
-	suggestion.Id = nil
-	suggestion.Status = models.ToolboxSuggestionPending
-	suggestion.CreatedAt = time.Now().UTC()
-	suggestion.ReviewedAt = nil
-	suggestion.ReviewedBy = nil
-	result, err := c.db.Collection(toolboxSuggestionsCollection).InsertOne(ctx, suggestion)
-	if err != nil {
-		return models.ToolboxSuggestion{}, err
-	}
-	id := result.InsertedID.(primitive.ObjectID)
-	suggestion.Id = &id
-	return suggestion, nil
-}
-
-func (c *Client) GetToolboxSuggestionById(ctx context.Context, id string) (models.ToolboxSuggestion, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return models.ToolboxSuggestion{}, ToolboxSuggestionNotFoundError
-	}
-	var suggestion models.ToolboxSuggestion
-	err = c.db.Collection(toolboxSuggestionsCollection).FindOne(ctx, bson.D{{Key: "_id", Value: objectID}}).Decode(&suggestion)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.ToolboxSuggestion{}, ToolboxSuggestionNotFoundError
-		}
-		return models.ToolboxSuggestion{}, err
-	}
-	return suggestion, nil
-}
-
-// ListToolboxSuggestions returns a page of suggestions, newest first,
-// optionally filtered by status and/or kind (either "" means no filter).
-func (c *Client) ListToolboxSuggestions(ctx context.Context, status, kind string, limit, offset int64) ([]models.ToolboxSuggestion, int64, error) {
-	filter := bson.D{}
-	if status != "" {
-		filter = append(filter, bson.E{Key: "status", Value: status})
-	}
-	if kind != "" {
-		filter = append(filter, bson.E{Key: "kind", Value: kind})
-	}
-	collection := c.db.Collection(toolboxSuggestionsCollection)
-	count, err := collection.CountDocuments(ctx, filter)
-	if err != nil {
-		return nil, 0, err
-	}
-	findOptions := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
-	if limit > 0 {
-		findOptions.SetLimit(limit)
-	}
-	if offset > 0 {
-		findOptions.SetSkip(offset)
-	}
-	cursor, err := collection.Find(ctx, filter, findOptions)
-	if err != nil {
-		return nil, 0, err
-	}
-	suggestions := []models.ToolboxSuggestion{}
-	if err := cursor.All(ctx, &suggestions); err != nil {
-		return nil, 0, err
-	}
-	return suggestions, count, nil
-}
-
-// UpdateToolboxSuggestionStatus transitions a suggestion to a terminal
-// status, stamping who reviewed it and when.
-func (c *Client) UpdateToolboxSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return ToolboxSuggestionNotFoundError
-	}
-	set := bson.D{{Key: "status", Value: status}, {Key: "reviewed_at", Value: time.Now().UTC()}}
-	if reviewedBy != "" {
-		if reviewerID, err := primitive.ObjectIDFromHex(reviewedBy); err == nil {
-			set = append(set, bson.E{Key: "reviewed_by", Value: reviewerID})
-		}
-	}
-	result, err := c.db.Collection(toolboxSuggestionsCollection).UpdateOne(ctx,
-		bson.D{{Key: "_id", Value: objectID}}, bson.D{{Key: "$set", Value: set}})
-	if err != nil {
-		return err
-	}
-	if result.MatchedCount == 0 {
-		return ToolboxSuggestionNotFoundError
-	}
-	return nil
-}
-
 // --- Seeding ---
 
-// SeedToolboxDefaults inserts a starter set of common ingredients and units
-// the first time each collection is empty - idempotent, safe to call on
-// every startup. It never touches a collection that already has documents,
-// so admin edits/deletions are never undone. Substitutions get no seed data
-// - that list starts empty and grows only from user suggestions.
+// SeedToolboxDefaults inserts a starter set of units the first time the
+// collection is empty - idempotent, safe to call on every startup. It never
+// touches a collection that already has documents, so admin edits/deletions
+// are never undone. Substitutions get no seed data.
 func (c *Client) SeedToolboxDefaults(ctx context.Context) error {
-	if count, err := c.db.Collection(toolboxIngredientsCollection).CountDocuments(ctx, bson.D{}); err != nil {
-		return err
-	} else if count == 0 {
-		docs := []interface{}{}
-		for _, i := range defaultToolboxIngredients {
-			docs = append(docs, models.ToolboxIngredient{Name: i.name, NameLower: strings.ToLower(i.name), GPer100ml: i.gPer100ml, CreatedAt: time.Now().UTC()})
-		}
-		if _, err := c.db.Collection(toolboxIngredientsCollection).InsertMany(ctx, docs); err != nil {
-			return err
-		}
-	}
 	if count, err := c.db.Collection(toolboxUnitsCollection).CountDocuments(ctx, bson.D{}); err != nil {
 		return err
 	} else if count == 0 {
@@ -439,15 +232,6 @@ func (c *Client) SeedToolboxDefaults(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-var defaultToolboxIngredients = []struct {
-	name      string
-	gPer100ml float64
-}{
-	{"Milk", 103}, {"Water", 100}, {"Flour (all-purpose)", 53}, {"Sugar (granulated)", 85},
-	{"Brown sugar", 90}, {"Butter", 96}, {"Honey", 141}, {"Olive oil", 92}, {"Vegetable oil", 92},
-	{"Rice (uncooked)", 85}, {"Cocoa powder", 53}, {"Heavy cream", 100}, {"Yogurt", 103},
 }
 
 var defaultToolboxUnits = []struct {

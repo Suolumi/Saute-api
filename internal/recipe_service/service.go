@@ -87,19 +87,16 @@ var (
 	// ErrOverrideNotFound is ClearTranslationOverride's guard against an
 	// unknown override id.
 	ErrOverrideNotFound = errors.New("translation override not found")
-	// ErrToolboxSuggestionNotFound is Approve/RejectToolboxSuggestion's error
-	// for an id that doesn't resolve to a pending (or any) suggestion.
-	ErrToolboxSuggestionNotFound = errors.New("toolbox suggestion not found")
-	// ErrToolboxEntryNotFound is returned when a suggestion's TargetID no
-	// longer resolves to an existing entry (deleted since submission).
+	// ErrToolboxEntryNotFound is returned when a unit id doesn't resolve to
+	// an existing unit.
 	ErrToolboxEntryNotFound = errors.New("toolbox entry not found")
 	// ErrNutritionSuggestionNotFound is Approve/RejectNutritionSuggestion's
 	// error for an id that doesn't resolve to a pending (or any) suggestion.
 	ErrNutritionSuggestionNotFound = errors.New("nutrition suggestion not found")
-	// ErrNutritionIngredientNotFound is SubmitNutritionLinkSuggestion's guard
-	// against an unknown nutrition_id, or ApproveNutritionSuggestion's guard
-	// against a link/alias target deleted since submission.
-	ErrNutritionIngredientNotFound = errors.New("nutrition ingredient not found")
+	// ErrFoodNotFound is returned for an unknown food id, and by
+	// ApproveNutritionSuggestion for a link/alias target deleted since
+	// submission.
+	ErrFoodNotFound = errors.New("food not found")
 )
 
 // defaultCategory normalizes a possibly-legacy empty Category to Food,
@@ -162,13 +159,6 @@ type Store interface {
 	DeleteTranslationOverride(ctx context.Context, id string) (models.TranslationOverride, error)
 	DeleteTranslationOverridesByFieldPrefix(ctx context.Context, recipeID, locale, prefix string) error
 
-	CreateToolboxIngredient(ctx context.Context, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error)
-	UpdateToolboxIngredient(ctx context.Context, id string, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error)
-	ListToolboxIngredients(ctx context.Context) ([]models.ToolboxIngredient, error)
-	GetToolboxIngredientById(ctx context.Context, id string) (models.ToolboxIngredient, error)
-	GetToolboxIngredientByNameLower(ctx context.Context, nameLower string) (models.ToolboxIngredient, error)
-	SetToolboxIngredientTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error
-
 	CreateToolboxUnit(ctx context.Context, name, symbol, kind string, toBase float64) (models.ToolboxUnit, error)
 	UpdateToolboxUnit(ctx context.Context, id string, name, symbol, kind string, toBase float64) (models.ToolboxUnit, error)
 	ListToolboxUnits(ctx context.Context) ([]models.ToolboxUnit, error)
@@ -183,16 +173,11 @@ type Store interface {
 	GetToolboxSubstitutionByProblemLower(ctx context.Context, problemLower string) (models.ToolboxSubstitution, error)
 	SetToolboxSubstitutionTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error
 
-	CreateToolboxSuggestion(ctx context.Context, suggestion models.ToolboxSuggestion) (models.ToolboxSuggestion, error)
-	GetToolboxSuggestionById(ctx context.Context, id string) (models.ToolboxSuggestion, error)
-	ListToolboxSuggestions(ctx context.Context, status, kind string, limit, offset int64) ([]models.ToolboxSuggestion, int64, error)
-	UpdateToolboxSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
+	ListFoods(ctx context.Context) ([]models.FoodItem, error)
+	GetFoodById(ctx context.Context, id string) (models.FoodItem, error)
 
-	ListNutritionIngredients(ctx context.Context) ([]models.NutritionIngredient, error)
-	GetNutritionIngredientById(ctx context.Context, id string) (models.NutritionIngredient, error)
-
-	CreateIngredientNutritionLink(ctx context.Context, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
-	UpdateIngredientNutritionLink(ctx context.Context, id string, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	CreateIngredientNutritionLink(ctx context.Context, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	UpdateIngredientNutritionLink(ctx context.Context, id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	GetIngredientNutritionLinkById(ctx context.Context, id string) (models.IngredientNutritionLink, error)
 	GetIngredientNutritionLinkByNameLower(ctx context.Context, nameLower string) (models.IngredientNutritionLink, error)
 	ListIngredientNutritionLinks(ctx context.Context) ([]models.IngredientNutritionLink, error)

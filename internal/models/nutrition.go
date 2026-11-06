@@ -12,32 +12,14 @@ const (
 	NutritionSuggestionRejected = "rejected"
 )
 
-// NutritionIngredient is one entry in the curated nutrition reference list,
-// imported once from ANSES's Ciqual food-composition table (see
-// docs/nutrition.md) - kcal plus five headline macros per 100g.
-type NutritionIngredient struct {
-	Id          *primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Name        string              `bson:"name" json:"name"`
-	NameLower   string              `bson:"name_lower" json:"-"`
-	Names       map[string]string   `bson:"names,omitempty" json:"names"`
-	KcalPer100g float64             `bson:"kcal_per_100g" json:"kcal_per_100g"`
-	ProteinG    float64             `bson:"protein_g_per_100g" json:"protein_g_per_100g"`
-	CarbsG      float64             `bson:"carbs_g_per_100g" json:"carbs_g_per_100g"`
-	FatG        float64             `bson:"fat_g_per_100g" json:"fat_g_per_100g"`
-	SaltG       float64             `bson:"salt_g_per_100g" json:"salt_g_per_100g"`
-	SugarG      float64             `bson:"sugar_g_per_100g" json:"sugar_g_per_100g"`
-	CreatedAt   time.Time           `bson:"created_at" json:"created_at"`
-}
-
-// IngredientNutritionLink maps a normalized free-text recipe ingredient name
-// to a NutritionIngredient, plus what's needed to get from "however a recipe
-// quantifies it" to grams. See docs/nutrition.md "Resolving a quantity to
-// grams".
+// IngredientNutritionLink maps a free-text recipe ingredient name to a FoodItem,
+// beating the food matched by name. GPer100ml and GramsPerUnit override the
+// food's own defaults when set.
 type IngredientNutritionLink struct {
 	Id           *primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Name         string              `bson:"name" json:"name"`
 	NameLower    string              `bson:"name_lower" json:"-"`
-	NutritionID  primitive.ObjectID  `bson:"nutrition_id" json:"nutrition_id"`
+	FoodID       string              `bson:"food_id" json:"food_id"`
 	GPer100ml    *float64            `bson:"g_per_100ml,omitempty" json:"g_per_100ml,omitempty"`
 	GramsPerUnit *float64            `bson:"grams_per_unit,omitempty" json:"grams_per_unit,omitempty"`
 	CreatedAt    time.Time           `bson:"created_at" json:"created_at"`
@@ -71,10 +53,10 @@ type NutritionSuggestion struct {
 	ReviewedAt  *time.Time          `bson:"reviewed_at,omitempty" json:"reviewed_at,omitempty"`
 	ReviewedBy  *primitive.ObjectID `bson:"reviewed_by,omitempty" json:"reviewed_by,omitempty"`
 
-	IngredientName string             `bson:"ingredient_name" json:"ingredient_name"`
-	NutritionID    primitive.ObjectID `bson:"nutrition_id" json:"nutrition_id"`
-	GPer100ml      *float64           `bson:"g_per_100ml,omitempty" json:"g_per_100ml,omitempty"`
-	GramsPerUnit   *float64           `bson:"grams_per_unit,omitempty" json:"grams_per_unit,omitempty"`
+	IngredientName string   `bson:"ingredient_name" json:"ingredient_name"`
+	FoodID         string   `bson:"food_id" json:"food_id"`
+	GPer100ml      *float64 `bson:"g_per_100ml,omitempty" json:"g_per_100ml,omitempty"`
+	GramsPerUnit   *float64 `bson:"grams_per_unit,omitempty" json:"grams_per_unit,omitempty"`
 
 	// Optional accompanying unit-alias suggestion.
 	UnitAlias    string              `bson:"unit_alias,omitempty" json:"unit_alias,omitempty"`
@@ -90,7 +72,7 @@ type NutritionSuggestion struct {
 type SubmitNutritionLinkRequest struct {
 	IngredientName string   `json:"ingredient_name"`
 	IngredientUnit string   `json:"ingredient_unit,omitempty"`
-	NutritionID    string   `json:"nutrition_id"`
+	FoodID         string   `json:"food_id"`
 	GPer100ml      *float64 `json:"g_per_100ml,omitempty"`
 	GramsPerUnit   *float64 `json:"grams_per_unit,omitempty"`
 	UnitAlias      string   `json:"unit_alias,omitempty"`
@@ -116,7 +98,7 @@ type SubmitNutritionLinkResponse struct {
 // fields, since an admin edit is never a suggestion.
 type AdminNutritionLinkRequest struct {
 	IngredientName string   `json:"ingredient_name"`
-	NutritionID    string   `json:"nutrition_id"`
+	FoodID         string   `json:"food_id"`
 	GPer100ml      *float64 `json:"g_per_100ml,omitempty"`
 	GramsPerUnit   *float64 `json:"grams_per_unit,omitempty"`
 }
@@ -144,14 +126,14 @@ type NutritionSuggestionView struct {
 	CreatedAt           time.Time           `json:"created_at"`
 	ReviewedAt          *time.Time          `json:"reviewed_at,omitempty"`
 
-	IngredientName   string             `json:"ingredient_name"`
-	NutritionID      primitive.ObjectID `json:"nutrition_id"`
-	NutritionName    string             `json:"nutrition_name,omitempty"`
-	GPer100ml        *float64           `json:"g_per_100ml,omitempty"`
-	GramsPerUnit     *float64           `json:"grams_per_unit,omitempty"`
-	UnitAlias        string             `json:"unit_alias,omitempty"`
-	UnitName         string             `json:"unit_name,omitempty"`
-	IsUnitCorrection bool               `json:"is_unit_correction"`
+	IngredientName   string   `json:"ingredient_name"`
+	FoodID           string   `json:"food_id"`
+	FoodName         string   `json:"food_name,omitempty"`
+	GPer100ml        *float64 `json:"g_per_100ml,omitempty"`
+	GramsPerUnit     *float64 `json:"grams_per_unit,omitempty"`
+	UnitAlias        string   `json:"unit_alias,omitempty"`
+	UnitName         string   `json:"unit_name,omitempty"`
+	IsUnitCorrection bool     `json:"is_unit_correction"`
 
 	// CurrentName is the target link's current ingredient name, for a
 	// correction only.
@@ -161,10 +143,6 @@ type NutritionSuggestionView struct {
 type ListNutritionSuggestionsResponse struct {
 	Length int64                     `json:"length"`
 	Items  []NutritionSuggestionView `json:"items"`
-}
-
-type ListNutritionIngredientsResponse struct {
-	Items []NutritionIngredient `json:"items"`
 }
 
 type ListIngredientNutritionLinksResponse struct {

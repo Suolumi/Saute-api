@@ -173,31 +173,6 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		},
 	},
 	{
-		ID: "admin.toolbox.listSuggestions", Method: "GET", Path: "/admin/toolbox-suggestions", Category: "toolbox",
-		Label: "List toolbox suggestions", Description: "Browse user-submitted Toolbox ingredient/unit/substitution additions and corrections awaiting review.",
-		Params: []models.AdminRouteParam{
-			{Name: "status", In: "query", Type: "string", Label: "Status"},
-			{Name: "kind", In: "query", Type: "string", Label: "Kind (ingredient / unit / substitution)"},
-			{Name: "limit", In: "query", Type: "int", Label: "Limit"},
-			{Name: "offset", In: "query", Type: "int", Label: "Offset"},
-		},
-	},
-	{
-		ID: "admin.toolbox.approve", Method: "POST", Path: "/admin/toolbox-suggestions/:id/approve", Category: "toolbox",
-		Label: "Approve toolbox suggestion", Description: "Apply a submitted addition or correction to the live Toolbox reference list.",
-		Params: []models.AdminRouteParam{
-			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
-		},
-	},
-	{
-		ID: "admin.toolbox.reject", Method: "POST", Path: "/admin/toolbox-suggestions/:id/reject", Category: "toolbox",
-		Label: "Reject toolbox suggestion", Description: "Dismiss a submitted Toolbox addition/correction with no effect.",
-		Destructive: true,
-		Params: []models.AdminRouteParam{
-			{Name: "id", In: "path", Type: "string", Required: true, Label: "Suggestion ID"},
-		},
-	},
-	{
 		ID: "admin.nutrition.listSuggestions", Method: "GET", Path: "/admin/nutrition-suggestions", Category: "nutrition",
 		Label: "List nutrition suggestions", Description: "Browse user-submitted ingredient nutrition link additions and corrections awaiting review.",
 		Params: []models.AdminRouteParam{
@@ -223,10 +198,10 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 	},
 	{
 		ID: "admin.nutrition.createLink", Method: "POST", Path: "/admin/nutrition-links", Category: "nutrition",
-		Label: "Create nutrition link", Description: "Directly link an ingredient name to a nutrition entry - applies immediately, no review.",
+		Label: "Create nutrition link", Description: "Directly link an ingredient name to a food - applies immediately, no review.",
 		Params: []models.AdminRouteParam{
 			{Name: "ingredient_name", In: "body", Type: "string", Required: true, Label: "Ingredient name"},
-			{Name: "nutrition_id", In: "body", Type: "string", Required: true, Label: "Nutrition entry ID"},
+			{Name: "food_id", In: "body", Type: "string", Required: true, Label: "Food ID"},
 			{Name: "g_per_100ml", In: "body", Type: "string", Label: "Density (g/100ml)"},
 			{Name: "grams_per_unit", In: "body", Type: "string", Label: "Grams per unit"},
 		},
@@ -237,7 +212,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		Params: []models.AdminRouteParam{
 			{Name: "id", In: "path", Type: "string", Required: true, Label: "Link ID"},
 			{Name: "ingredient_name", In: "body", Type: "string", Required: true, Label: "Ingredient name"},
-			{Name: "nutrition_id", In: "body", Type: "string", Required: true, Label: "Nutrition entry ID"},
+			{Name: "food_id", In: "body", Type: "string", Required: true, Label: "Food ID"},
 			{Name: "g_per_100ml", In: "body", Type: "string", Label: "Density (g/100ml)"},
 			{Name: "grams_per_unit", In: "body", Type: "string", Label: "Grams per unit"},
 		},

@@ -2,49 +2,32 @@ package recipe_service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
-	mongorepo "recipes/internal/database/mongo"
 	"recipes/internal/models"
 	"recipes/internal/utils"
 )
 
+// Kinds of Toolbox entry scheduleToolboxTranslation handles.
 const (
-	minToolboxGPer100ml    = 20.0
-	maxToolboxGPer100ml    = 250.0
+	toolboxKindUnit         = "unit"
+	toolboxKindSubstitution = "substitution"
+)
+
+const (
 	minToolboxUnitToBase   = 0.001
 	maxToolboxUnitToBase   = 100000.0
 	maxToolboxNameLength   = 100
-	maxToolboxNoteLength   = 500
 	maxToolboxTextLength   = 300
 	maxToolboxSymbolLength = 20
 )
 
-// ListToolboxIngredients returns every ingredient in the quantity converter's
-// density list, alphabetically - the list is curated and small enough that
-// no pagination is needed; the client searches/filters it itself. Each
-// entry's Name/Note is resolved into locale when a machine translation is
-// available (see resolveToolboxIngredientLocale), else left in its source
-// language.
-func (s *Service) ListToolboxIngredients(ctx context.Context, locale string) ([]models.ToolboxIngredient, error) {
-	items, err := s.db.ListToolboxIngredients(ctx)
-	if err != nil {
-		return nil, err
-	}
-	locale, _ = normalizeLocale(locale)
-	for i := range items {
-		items[i] = resolveToolboxIngredientLocale(items[i], locale)
-	}
-	return items, nil
-}
-
-// ListToolboxUnits returns every unit the quantity converter can convert
-// to/from, Name resolved into locale like ListToolboxIngredients.
+// ListToolboxUnits returns every unit conversions and nutrition understand,
+// Name resolved into locale when a machine translation exists.
 func (s *Service) ListToolboxUnits(ctx context.Context, locale string) ([]models.ToolboxUnit, error) {
 	items, err := s.db.ListToolboxUnits(ctx)
 	if err != nil {
@@ -58,7 +41,7 @@ func (s *Service) ListToolboxUnits(ctx context.Context, locale string) ([]models
 }
 
 // ListToolboxSubstitutions returns every ingredient-swap tip, resolved into
-// locale like ListToolboxIngredients.
+// locale like ListToolboxUnits.
 func (s *Service) ListToolboxSubstitutions(ctx context.Context, locale string) ([]models.ToolboxSubstitution, error) {
 	items, err := s.db.ListToolboxSubstitutions(ctx)
 	if err != nil {
@@ -71,25 +54,8 @@ func (s *Service) ListToolboxSubstitutions(ctx context.Context, locale string) (
 	return items, nil
 }
 
-// resolveToolboxIngredientLocale swaps in item's stored translation for
-// locale, when one exists and locale isn't just the source language under a
-// different regional tag (e.g. "en-US" vs "en"). A locale with no stored
-// translation yet (translate-on-write hasn't caught up, or the translator
-// isn't configured) falls back to the source text, same as a recipe with no
-// current translation row.
-func resolveToolboxIngredientLocale(item models.ToolboxIngredient, locale string) models.ToolboxIngredient {
-	if locale != "" && !sameBaseLocale(item.SourceLocale, locale) {
-		if t, ok := item.Translations[locale]; ok {
-			item.Name = t.Name
-			item.Note = t.Note
-		}
-	}
-	item.Translations = nil
-	return item
-}
-
-// resolveToolboxUnitLocale is resolveToolboxIngredientLocale for units -
-// only Name is translatable.
+// resolveToolboxUnitLocale swaps in item's stored translation for locale,
+// unless locale is the item's own source language. Only Name is translatable.
 func resolveToolboxUnitLocale(item models.ToolboxUnit, locale string) models.ToolboxUnit {
 	if locale != "" && !sameBaseLocale(item.SourceLocale, locale) {
 		if t, ok := item.Translations[locale]; ok {
@@ -100,7 +66,7 @@ func resolveToolboxUnitLocale(item models.ToolboxUnit, locale string) models.Too
 	return item
 }
 
-// resolveToolboxSubstitutionLocale is resolveToolboxIngredientLocale for
+// resolveToolboxSubstitutionLocale is resolveToolboxUnitLocale for
 // substitutions.
 func resolveToolboxSubstitutionLocale(item models.ToolboxSubstitution, locale string) models.ToolboxSubstitution {
 	if locale != "" && !sameBaseLocale(item.SourceLocale, locale) {
@@ -180,30 +146,7 @@ func (s *Service) translateToolboxEntry(kind string, id primitive.ObjectID) erro
 	ctx := context.Background()
 
 	switch kind {
-	case models.ToolboxSuggestionIngredient:
-		entry, err := s.db.GetToolboxIngredientById(ctx, id.Hex())
-		if err != nil {
-			return err
-		}
-		source, err := s.translator.DetectLocale(entry.Name)
-		if err != nil {
-			return err
-		}
-		translations := make(map[string]models.ToolboxIngredientTranslation)
-		for _, locale := range targetLocalesFor(source, s.targetLocales) {
-			translated, err := s.translateTextsCased([]string{entry.Name, entry.Note}, locale)
-			if err != nil {
-				return err
-			}
-			note := ""
-			if entry.Note != "" {
-				note = translated[1]
-			}
-			translations[locale] = models.ToolboxIngredientTranslation{Name: translated[0], Note: note}
-		}
-		return s.db.SetToolboxIngredientTranslations(ctx, id.Hex(), source, translations)
-
-	case models.ToolboxSuggestionUnit:
+	case toolboxKindUnit:
 		entry, err := s.db.GetToolboxUnitById(ctx, id.Hex())
 		if err != nil {
 			return err
@@ -222,7 +165,7 @@ func (s *Service) translateToolboxEntry(kind string, id primitive.ObjectID) erro
 		}
 		return s.db.SetToolboxUnitTranslations(ctx, id.Hex(), source, translations)
 
-	case models.ToolboxSuggestionSubstitution:
+	case toolboxKindSubstitution:
 		entry, err := s.db.GetToolboxSubstitutionById(ctx, id.Hex())
 		if err != nil {
 			return err
@@ -269,298 +212,18 @@ func toolboxNeedsTranslation[T any](sourceLocale string, translations map[string
 // toolboxNeedsTranslation flags. Retranslating rebuilds the entry's whole
 // map, which is cheap at the toolbox's size.
 func (s *Service) backfillToolboxTranslations(ctx context.Context) {
-	if ingredients, err := s.db.ListToolboxIngredients(ctx); err == nil {
-		for _, item := range ingredients {
-			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
-				s.scheduleToolboxTranslation(models.ToolboxSuggestionIngredient, *item.Id)
-			}
-		}
-	}
 	if units, err := s.db.ListToolboxUnits(ctx); err == nil {
 		for _, item := range units {
 			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
-				s.scheduleToolboxTranslation(models.ToolboxSuggestionUnit, *item.Id)
+				s.scheduleToolboxTranslation(toolboxKindUnit, *item.Id)
 			}
 		}
 	}
 	if substitutions, err := s.db.ListToolboxSubstitutions(ctx); err == nil {
 		for _, item := range substitutions {
 			if item.Id != nil && toolboxNeedsTranslation(item.SourceLocale, item.Translations, s.targetLocales) {
-				s.scheduleToolboxTranslation(models.ToolboxSuggestionSubstitution, *item.Id)
+				s.scheduleToolboxTranslation(toolboxKindSubstitution, *item.Id)
 			}
 		}
 	}
-}
-
-// SubmitIngredientSuggestion validates and stores a user-proposed addition
-// or correction to the density list. A name that already matches an
-// existing entry (case-insensitively) is submitted as a correction to that
-// entry (TargetID set) rather than rejected as a duplicate.
-func (s *Service) SubmitIngredientSuggestion(ctx context.Context, userID string, req models.SubmitIngredientSuggestionRequest) (models.ToolboxSuggestion, error) {
-	submittedBy, err := primitive.ObjectIDFromHex(userID)
-	if err != nil {
-		return models.ToolboxSuggestion{}, ErrForbidden
-	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" || len(name) > maxToolboxNameLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: name must be between 1 and %d characters", ErrInvalid, maxToolboxNameLength)
-	}
-	if req.GPer100ml < minToolboxGPer100ml || req.GPer100ml > maxToolboxGPer100ml {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: density must be between %g and %g grams per 100ml", ErrInvalid, minToolboxGPer100ml, maxToolboxGPer100ml)
-	}
-	note := strings.TrimSpace(req.Note)
-	if len(note) > maxToolboxNoteLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: note must be at most %d characters", ErrInvalid, maxToolboxNoteLength)
-	}
-
-	targetID, err := s.findToolboxIngredientTarget(ctx, name)
-	if err != nil {
-		return models.ToolboxSuggestion{}, err
-	}
-
-	suggestion := models.ToolboxSuggestion{
-		Kind: models.ToolboxSuggestionIngredient, TargetID: targetID, SubmittedBy: submittedBy, Note: note,
-		IngredientName: name, GPer100ml: req.GPer100ml,
-	}
-	return s.db.CreateToolboxSuggestion(ctx, suggestion)
-}
-
-func (s *Service) findToolboxIngredientTarget(ctx context.Context, name string) (*primitive.ObjectID, error) {
-	existing, err := s.db.GetToolboxIngredientByNameLower(ctx, strings.ToLower(name))
-	if err == nil {
-		return existing.Id, nil
-	}
-	if errors.Is(err, mongorepo.ToolboxEntryNotFoundError) {
-		return nil, nil
-	}
-	return nil, err
-}
-
-// SubmitUnitSuggestion validates and stores a user-proposed addition or
-// correction to the unit list, with the same duplicate-becomes-correction
-// treatment as SubmitIngredientSuggestion.
-func (s *Service) SubmitUnitSuggestion(ctx context.Context, userID string, req models.SubmitUnitSuggestionRequest) (models.ToolboxSuggestion, error) {
-	submittedBy, err := primitive.ObjectIDFromHex(userID)
-	if err != nil {
-		return models.ToolboxSuggestion{}, ErrForbidden
-	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" || len(name) > maxToolboxNameLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: name must be between 1 and %d characters", ErrInvalid, maxToolboxNameLength)
-	}
-	symbol := strings.TrimSpace(req.Symbol)
-	if symbol == "" || len(symbol) > maxToolboxSymbolLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: symbol must be between 1 and %d characters", ErrInvalid, maxToolboxSymbolLength)
-	}
-	kind := strings.TrimSpace(strings.ToLower(req.Kind))
-	if kind != models.ToolboxUnitWeight && kind != models.ToolboxUnitVolume {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: kind must be %q or %q", ErrInvalid, models.ToolboxUnitWeight, models.ToolboxUnitVolume)
-	}
-	if req.ToBase < minToolboxUnitToBase || req.ToBase > maxToolboxUnitToBase {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: conversion factor must be between %g and %g", ErrInvalid, minToolboxUnitToBase, maxToolboxUnitToBase)
-	}
-	note := strings.TrimSpace(req.Note)
-	if len(note) > maxToolboxNoteLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: note must be at most %d characters", ErrInvalid, maxToolboxNoteLength)
-	}
-
-	var targetID *primitive.ObjectID
-	existing, err := s.db.GetToolboxUnitByNameLower(ctx, strings.ToLower(name))
-	switch {
-	case err == nil:
-		targetID = existing.Id
-	case errors.Is(err, mongorepo.ToolboxEntryNotFoundError):
-		// no existing match - a new unit
-	default:
-		return models.ToolboxSuggestion{}, err
-	}
-
-	suggestion := models.ToolboxSuggestion{
-		Kind: models.ToolboxSuggestionUnit, TargetID: targetID, SubmittedBy: submittedBy, Note: note,
-		UnitName: name, UnitSymbol: symbol, UnitKind: kind, UnitToBase: req.ToBase,
-	}
-	return s.db.CreateToolboxSuggestion(ctx, suggestion)
-}
-
-// SubmitSubstitutionSuggestion validates and stores a user-proposed
-// addition or correction to the substitutions list. The problem text is the
-// matching key: an existing entry whose problem matches case-insensitively
-// makes this a correction to that entry.
-func (s *Service) SubmitSubstitutionSuggestion(ctx context.Context, userID string, req models.SubmitSubstitutionSuggestionRequest) (models.ToolboxSuggestion, error) {
-	submittedBy, err := primitive.ObjectIDFromHex(userID)
-	if err != nil {
-		return models.ToolboxSuggestion{}, ErrForbidden
-	}
-	problem := strings.TrimSpace(req.Problem)
-	if problem == "" || len(problem) > maxToolboxTextLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: problem must be between 1 and %d characters", ErrInvalid, maxToolboxTextLength)
-	}
-	solution := strings.TrimSpace(req.Solution)
-	if solution == "" || len(solution) > maxToolboxTextLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: solution must be between 1 and %d characters", ErrInvalid, maxToolboxTextLength)
-	}
-	tag := strings.TrimSpace(req.Tag)
-	if len(tag) > maxToolboxNameLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: tag must be at most %d characters", ErrInvalid, maxToolboxNameLength)
-	}
-	note := strings.TrimSpace(req.Note)
-	if len(note) > maxToolboxNoteLength {
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: note must be at most %d characters", ErrInvalid, maxToolboxNoteLength)
-	}
-
-	var targetID *primitive.ObjectID
-	existing, err := s.db.GetToolboxSubstitutionByProblemLower(ctx, strings.ToLower(problem))
-	switch {
-	case err == nil:
-		targetID = existing.Id
-	case errors.Is(err, mongorepo.ToolboxEntryNotFoundError):
-		// no existing match - a new substitution
-	default:
-		return models.ToolboxSuggestion{}, err
-	}
-
-	suggestion := models.ToolboxSuggestion{
-		Kind: models.ToolboxSuggestionSubstitution, TargetID: targetID, SubmittedBy: submittedBy, Note: note,
-		SubProblem: problem, SubSolution: solution, SubTag: tag,
-	}
-	return s.db.CreateToolboxSuggestion(ctx, suggestion)
-}
-
-// ListToolboxSuggestionsForAdmin resolves each suggestion's submitter
-// username and, for a correction, the entry's current name/problem, so the
-// admin review tab can render what would be overwritten.
-func (s *Service) ListToolboxSuggestionsForAdmin(ctx context.Context, status, kind string, limit, offset int64) (models.ListToolboxSuggestionsResponse, error) {
-	suggestions, total, err := s.db.ListToolboxSuggestions(ctx, status, kind, limit, offset)
-	if err != nil {
-		return models.ListToolboxSuggestionsResponse{}, err
-	}
-	views := make([]models.ToolboxSuggestionView, 0, len(suggestions))
-	if len(suggestions) == 0 {
-		return models.ListToolboxSuggestionsResponse{Length: total, Items: views}, nil
-	}
-
-	userIDs := make([]string, 0, len(suggestions))
-	for _, suggestion := range suggestions {
-		userIDs = append(userIDs, suggestion.SubmittedBy.Hex())
-	}
-	users, err := s.db.GetUsersByIDs(ctx, userIDs)
-	if err != nil {
-		return models.ListToolboxSuggestionsResponse{}, err
-	}
-
-	for _, suggestion := range suggestions {
-		view := models.ToolboxSuggestionView{
-			Id: suggestion.Id, Kind: suggestion.Kind, TargetID: suggestion.TargetID, IsCorrection: suggestion.TargetID != nil,
-			SubmittedBy: suggestion.SubmittedBy, SubmittedByUsername: users[suggestion.SubmittedBy.Hex()].Username,
-			Note: suggestion.Note, Status: suggestion.Status, CreatedAt: suggestion.CreatedAt, ReviewedAt: suggestion.ReviewedAt,
-			IngredientName: suggestion.IngredientName, GPer100ml: suggestion.GPer100ml,
-			UnitName: suggestion.UnitName, UnitSymbol: suggestion.UnitSymbol, UnitKind: suggestion.UnitKind, UnitToBase: suggestion.UnitToBase,
-			SubProblem: suggestion.SubProblem, SubSolution: suggestion.SubSolution, SubTag: suggestion.SubTag,
-		}
-		if suggestion.TargetID != nil {
-			view.CurrentName = s.currentToolboxEntryName(ctx, suggestion.Kind, suggestion.TargetID.Hex())
-		}
-		views = append(views, view)
-	}
-	return models.ListToolboxSuggestionsResponse{Length: total, Items: views}, nil
-}
-
-func (s *Service) currentToolboxEntryName(ctx context.Context, kind, id string) string {
-	switch kind {
-	case models.ToolboxSuggestionIngredient:
-		if entry, err := s.db.GetToolboxIngredientById(ctx, id); err == nil {
-			return entry.Name
-		}
-	case models.ToolboxSuggestionUnit:
-		if entry, err := s.db.GetToolboxUnitById(ctx, id); err == nil {
-			return entry.Name
-		}
-	case models.ToolboxSuggestionSubstitution:
-		if entry, err := s.db.GetToolboxSubstitutionById(ctx, id); err == nil {
-			return entry.Problem
-		}
-	}
-	return ""
-}
-
-// ApproveToolboxSuggestion applies a submitted addition/correction to the
-// live reference list: updates the target entry in place for a correction,
-// otherwise inserts a new entry.
-func (s *Service) ApproveToolboxSuggestion(ctx context.Context, id, adminID string) (models.ToolboxSuggestion, error) {
-	suggestion, err := s.db.GetToolboxSuggestionById(ctx, id)
-	if err != nil {
-		if errors.Is(err, mongorepo.ToolboxSuggestionNotFoundError) {
-			return models.ToolboxSuggestion{}, ErrToolboxSuggestionNotFound
-		}
-		return models.ToolboxSuggestion{}, err
-	}
-
-	switch suggestion.Kind {
-	case models.ToolboxSuggestionIngredient:
-		if suggestion.TargetID != nil {
-			if _, err := s.db.UpdateToolboxIngredient(ctx, suggestion.TargetID.Hex(), suggestion.IngredientName, suggestion.GPer100ml, suggestion.Note); err != nil {
-				return models.ToolboxSuggestion{}, toolboxEntryError(err)
-			}
-			s.scheduleToolboxTranslation(models.ToolboxSuggestionIngredient, *suggestion.TargetID)
-		} else if entry, err := s.db.CreateToolboxIngredient(ctx, suggestion.IngredientName, suggestion.GPer100ml, suggestion.Note); err != nil {
-			return models.ToolboxSuggestion{}, err
-		} else if entry.Id != nil {
-			s.scheduleToolboxTranslation(models.ToolboxSuggestionIngredient, *entry.Id)
-		}
-	case models.ToolboxSuggestionUnit:
-		if suggestion.TargetID != nil {
-			if _, err := s.db.UpdateToolboxUnit(ctx, suggestion.TargetID.Hex(), suggestion.UnitName, suggestion.UnitSymbol, suggestion.UnitKind, suggestion.UnitToBase); err != nil {
-				return models.ToolboxSuggestion{}, toolboxEntryError(err)
-			}
-			s.scheduleToolboxTranslation(models.ToolboxSuggestionUnit, *suggestion.TargetID)
-		} else if entry, err := s.db.CreateToolboxUnit(ctx, suggestion.UnitName, suggestion.UnitSymbol, suggestion.UnitKind, suggestion.UnitToBase); err != nil {
-			return models.ToolboxSuggestion{}, err
-		} else if entry.Id != nil {
-			s.scheduleToolboxTranslation(models.ToolboxSuggestionUnit, *entry.Id)
-		}
-	case models.ToolboxSuggestionSubstitution:
-		if suggestion.TargetID != nil {
-			if _, err := s.db.UpdateToolboxSubstitution(ctx, suggestion.TargetID.Hex(), suggestion.SubProblem, suggestion.SubSolution, suggestion.SubTag); err != nil {
-				return models.ToolboxSuggestion{}, toolboxEntryError(err)
-			}
-			s.scheduleToolboxTranslation(models.ToolboxSuggestionSubstitution, *suggestion.TargetID)
-		} else if entry, err := s.db.CreateToolboxSubstitution(ctx, suggestion.SubProblem, suggestion.SubSolution, suggestion.SubTag); err != nil {
-			return models.ToolboxSuggestion{}, err
-		} else if entry.Id != nil {
-			s.scheduleToolboxTranslation(models.ToolboxSuggestionSubstitution, *entry.Id)
-		}
-	default:
-		return models.ToolboxSuggestion{}, fmt.Errorf("%w: unknown suggestion kind %q", ErrInvalid, suggestion.Kind)
-	}
-
-	if err := s.db.UpdateToolboxSuggestionStatus(ctx, id, models.ToolboxSuggestionApproved, adminID); err != nil {
-		return models.ToolboxSuggestion{}, err
-	}
-	suggestion.Status = models.ToolboxSuggestionApproved
-	return suggestion, nil
-}
-
-func toolboxEntryError(err error) error {
-	if errors.Is(err, mongorepo.ToolboxEntryNotFoundError) {
-		return ErrToolboxEntryNotFound
-	}
-	return err
-}
-
-// RejectToolboxSuggestion dismisses a submitted addition/correction with no
-// further effect - no reason is recorded, matching translation suggestions'
-// v1 scope.
-func (s *Service) RejectToolboxSuggestion(ctx context.Context, id, adminID string) (models.ToolboxSuggestion, error) {
-	suggestion, err := s.db.GetToolboxSuggestionById(ctx, id)
-	if err != nil {
-		if errors.Is(err, mongorepo.ToolboxSuggestionNotFoundError) {
-			return models.ToolboxSuggestion{}, ErrToolboxSuggestionNotFound
-		}
-		return models.ToolboxSuggestion{}, err
-	}
-	if err := s.db.UpdateToolboxSuggestionStatus(ctx, id, models.ToolboxSuggestionRejected, adminID); err != nil {
-		return models.ToolboxSuggestion{}, err
-	}
-	suggestion.Status = models.ToolboxSuggestionRejected
-	return suggestion, nil
 }

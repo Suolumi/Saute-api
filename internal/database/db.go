@@ -70,13 +70,6 @@ type Database interface {
 	DeleteTranslationOverride(ctx context.Context, id string) (models.TranslationOverride, error)
 	DeleteTranslationOverridesByFieldPrefix(ctx context.Context, recipeID, locale, prefix string) error
 
-	CreateToolboxIngredient(ctx context.Context, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error)
-	UpdateToolboxIngredient(ctx context.Context, id string, name string, gPer100ml float64, note string) (models.ToolboxIngredient, error)
-	ListToolboxIngredients(ctx context.Context) ([]models.ToolboxIngredient, error)
-	GetToolboxIngredientById(ctx context.Context, id string) (models.ToolboxIngredient, error)
-	GetToolboxIngredientByNameLower(ctx context.Context, nameLower string) (models.ToolboxIngredient, error)
-	SetToolboxIngredientTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error
-
 	CreateToolboxUnit(ctx context.Context, name, symbol, kind string, toBase float64) (models.ToolboxUnit, error)
 	UpdateToolboxUnit(ctx context.Context, id string, name, symbol, kind string, toBase float64) (models.ToolboxUnit, error)
 	ListToolboxUnits(ctx context.Context) ([]models.ToolboxUnit, error)
@@ -91,17 +84,13 @@ type Database interface {
 	GetToolboxSubstitutionByProblemLower(ctx context.Context, problemLower string) (models.ToolboxSubstitution, error)
 	SetToolboxSubstitutionTranslations(ctx context.Context, id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error
 
-	CreateToolboxSuggestion(ctx context.Context, suggestion models.ToolboxSuggestion) (models.ToolboxSuggestion, error)
-	GetToolboxSuggestionById(ctx context.Context, id string) (models.ToolboxSuggestion, error)
-	ListToolboxSuggestions(ctx context.Context, status, kind string, limit, offset int64) ([]models.ToolboxSuggestion, int64, error)
-	UpdateToolboxSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
 	SeedToolboxDefaults(ctx context.Context) error
 
-	ListNutritionIngredients(ctx context.Context) ([]models.NutritionIngredient, error)
-	GetNutritionIngredientById(ctx context.Context, id string) (models.NutritionIngredient, error)
+	ListFoods(ctx context.Context) ([]models.FoodItem, error)
+	GetFoodById(ctx context.Context, id string) (models.FoodItem, error)
 
-	CreateIngredientNutritionLink(ctx context.Context, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
-	UpdateIngredientNutritionLink(ctx context.Context, id string, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	CreateIngredientNutritionLink(ctx context.Context, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	UpdateIngredientNutritionLink(ctx context.Context, id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	GetIngredientNutritionLinkById(ctx context.Context, id string) (models.IngredientNutritionLink, error)
 	GetIngredientNutritionLinkByNameLower(ctx context.Context, nameLower string) (models.IngredientNutritionLink, error)
 	ListIngredientNutritionLinks(ctx context.Context) ([]models.IngredientNutritionLink, error)
@@ -118,6 +107,7 @@ type Database interface {
 	ListNutritionSuggestions(ctx context.Context, status string, limit, offset int64) ([]models.NutritionSuggestion, int64, error)
 	UpdateNutritionSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
 	SeedNutritionDefaults(ctx context.Context) error
+	MigrateFoods(ctx context.Context) error
 
 	ListRecipeTags(ctx context.Context) ([]models.RecipeTag, error)
 	GetRecipeTag(ctx context.Context, slug string) (models.RecipeTag, error)

@@ -1,7 +1,6 @@
 package recipe_service
 
 import (
-	"context"
 	"reflect"
 	"testing"
 
@@ -48,41 +47,6 @@ func TestTranslateTextsCasedLowersBeforeTranslatingAndRestoresCapitalization(t *
 	}
 }
 
-func TestResolveToolboxIngredientLocaleServesTranslation(t *testing.T) {
-	item := models.ToolboxIngredient{
-		Name: "Milk", Note: "source note", SourceLocale: "en",
-		Translations: map[string]models.ToolboxIngredientTranslation{
-			"fr": {Name: "Lait", Note: "note source"},
-		},
-	}
-
-	got := resolveToolboxIngredientLocale(item, "fr")
-	if got.Name != "Lait" || got.Note != "note source" {
-		t.Fatalf("got name=%q note=%q, want Lait/note source", got.Name, got.Note)
-	}
-}
-
-func TestResolveToolboxIngredientLocaleFallsBackWithoutTranslation(t *testing.T) {
-	item := models.ToolboxIngredient{Name: "Milk", SourceLocale: "en"}
-
-	got := resolveToolboxIngredientLocale(item, "fi")
-	if got.Name != "Milk" {
-		t.Fatalf("got name=%q, want Milk (no fi translation stored)", got.Name)
-	}
-}
-
-func TestResolveToolboxIngredientLocaleSkipsSameBaseLocale(t *testing.T) {
-	item := models.ToolboxIngredient{
-		Name: "Milk", SourceLocale: "en",
-		Translations: map[string]models.ToolboxIngredientTranslation{"en-GB": {Name: "should never be served"}},
-	}
-
-	got := resolveToolboxIngredientLocale(item, "en-US")
-	if got.Name != "Milk" {
-		t.Fatalf("got name=%q, want Milk (en-US shares en's base language)", got.Name)
-	}
-}
-
 func TestResolveToolboxUnitLocaleServesTranslation(t *testing.T) {
 	item := models.ToolboxUnit{
 		Name: "Gram", Symbol: "g", SourceLocale: "en",
@@ -109,55 +73,15 @@ func TestResolveToolboxSubstitutionLocaleServesTranslation(t *testing.T) {
 	}
 }
 
-func TestListToolboxIngredientsResolvesRequestedLocale(t *testing.T) {
-	store := &fakeStore{
-		listToolboxIngredientsFn: func() ([]models.ToolboxIngredient, error) {
-			return []models.ToolboxIngredient{{
-				Name: "Milk", SourceLocale: "en",
-				Translations: map[string]models.ToolboxIngredientTranslation{"fr": {Name: "Lait"}},
-			}}, nil
-		},
-	}
-	s := &Service{db: store}
-
-	items, err := s.ListToolboxIngredients(context.Background(), "fr")
-	if err != nil {
-		t.Fatalf("ListToolboxIngredients: %v", err)
-	}
-	if len(items) != 1 || items[0].Name != "Lait" {
-		t.Fatalf("items = %+v, want one entry named Lait", items)
-	}
-}
-
-func TestListToolboxIngredientsDefaultsToSourceTextWithNoLocale(t *testing.T) {
-	store := &fakeStore{
-		listToolboxIngredientsFn: func() ([]models.ToolboxIngredient, error) {
-			return []models.ToolboxIngredient{{
-				Name: "Milk", SourceLocale: "en",
-				Translations: map[string]models.ToolboxIngredientTranslation{"fr": {Name: "Lait"}},
-			}}, nil
-		},
-	}
-	s := &Service{db: store}
-
-	items, err := s.ListToolboxIngredients(context.Background(), "")
-	if err != nil {
-		t.Fatalf("ListToolboxIngredients: %v", err)
-	}
-	if len(items) != 1 || items[0].Name != "Milk" {
-		t.Fatalf("items = %+v, want the source-language entry", items)
-	}
-}
-
 func TestTranslateToolboxEntryDetectsSourceAndTranslatesIntoEveryOtherTarget(t *testing.T) {
 	id := ptrObjectID()
 	var gotID, gotSourceLocale string
-	var gotTranslations map[string]models.ToolboxIngredientTranslation
+	var gotTranslations map[string]models.ToolboxUnitTranslation
 	store := &fakeStore{
-		getToolboxIngredientByIdFn: func(string) (models.ToolboxIngredient, error) {
-			return models.ToolboxIngredient{Id: id, Name: "Milk", Note: "creamy"}, nil
+		getToolboxUnitByIdFn: func(string) (models.ToolboxUnit, error) {
+			return models.ToolboxUnit{Id: id, Name: "Cup"}, nil
 		},
-		setToolboxIngredientTranslationsFn: func(entryID, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error {
+		setToolboxUnitTranslationsFn: func(entryID, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error {
 			gotID, gotSourceLocale, gotTranslations = entryID, sourceLocale, translations
 			return nil
 		},
@@ -169,15 +93,15 @@ func TestTranslateToolboxEntryDetectsSourceAndTranslatesIntoEveryOtherTarget(t *
 		translateSlots: make(chan struct{}, 1),
 	}
 
-	if err := s.translateToolboxEntry(models.ToolboxSuggestionIngredient, *id); err != nil {
+	if err := s.translateToolboxEntry(toolboxKindUnit, *id); err != nil {
 		t.Fatalf("translateToolboxEntry: %v", err)
 	}
 	if gotID != id.Hex() || gotSourceLocale != "en" {
 		t.Fatalf("got id=%q sourceLocale=%q, want %q/en", gotID, gotSourceLocale, id.Hex())
 	}
-	want := map[string]models.ToolboxIngredientTranslation{
-		"fr": {Name: "Milk-fr", Note: "creamy-fr"},
-		"fi": {Name: "Milk-fi", Note: "creamy-fi"},
+	want := map[string]models.ToolboxUnitTranslation{
+		"fr": {Name: "Cup-fr"},
+		"fi": {Name: "Cup-fi"},
 	}
 	if !reflect.DeepEqual(gotTranslations, want) {
 		t.Fatalf("translations = %+v, want %+v (en dropped as the detected source locale)", gotTranslations, want)
@@ -203,7 +127,7 @@ func TestTranslateToolboxEntryTranslatesSubstitutions(t *testing.T) {
 		translateSlots: make(chan struct{}, 1),
 	}
 
-	if err := s.translateToolboxEntry(models.ToolboxSuggestionSubstitution, *id); err != nil {
+	if err := s.translateToolboxEntry(toolboxKindSubstitution, *id); err != nil {
 		t.Fatalf("translateToolboxEntry: %v", err)
 	}
 	want := map[string]models.ToolboxSubstitutionTranslation{

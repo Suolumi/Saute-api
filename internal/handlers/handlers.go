@@ -71,6 +71,10 @@ func New(cfg *config.Config) (*Handlers, error) {
 		_ = db.Close(context.Background())
 		return nil, err
 	}
+	if err := db.MigrateFoods(startupCtx); err != nil {
+		_ = db.Close(context.Background())
+		return nil, err
+	}
 
 	jm := jwt_manager.New(cfg.Jwt)
 
@@ -111,7 +115,7 @@ func New(cfg *config.Config) (*Handlers, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Covers what SeedToolboxDefaults inserted (it runs before the
+	// Covers the units SeedToolboxDefaults inserted (it runs before the
 	// translator exists) and any newly configured target locale.
 	recipeService.BackfillTranslations(startupCtx)
 
@@ -239,9 +243,6 @@ func (h *Handlers) RegisterEndpoints() {
 	adminRouter.POST("/translation-suggestions/:id/reject", h.AdminRejectTranslationSuggestion, authLimiter)
 	adminRouter.GET("/translation-overrides", h.AdminListTranslationOverrides)
 	adminRouter.DELETE("/translation-overrides/:id", h.AdminClearTranslationOverride, authLimiter)
-	adminRouter.GET("/toolbox-suggestions", h.AdminListToolboxSuggestions)
-	adminRouter.POST("/toolbox-suggestions/:id/approve", h.AdminApproveToolboxSuggestion, authLimiter)
-	adminRouter.POST("/toolbox-suggestions/:id/reject", h.AdminRejectToolboxSuggestion, authLimiter)
 	adminRouter.GET("/nutrition-suggestions", h.AdminListNutritionSuggestions)
 	adminRouter.POST("/nutrition-suggestions/:id/approve", h.AdminApproveNutritionSuggestion, authLimiter)
 	adminRouter.POST("/nutrition-suggestions/:id/reject", h.AdminRejectNutritionSuggestion, authLimiter)
@@ -283,15 +284,11 @@ func (h *Handlers) RegisterEndpoints() {
 	unprotectedRouter.GET("/tags", h.ListTags)
 
 	// Toolbox routes
-	unprotectedRouter.GET("/toolbox/ingredients", h.ListToolboxIngredients)
 	unprotectedRouter.GET("/toolbox/units", h.ListToolboxUnits)
 	unprotectedRouter.GET("/toolbox/substitutions", h.ListToolboxSubstitutions)
-	protectedRouter.POST("/toolbox/ingredient-suggestions", h.SubmitIngredientSuggestion, authLimiter)
-	protectedRouter.POST("/toolbox/unit-suggestions", h.SubmitUnitSuggestion, authLimiter)
-	protectedRouter.POST("/toolbox/substitution-suggestions", h.SubmitSubstitutionSuggestion, authLimiter)
 
 	// Nutrition routes
-	unprotectedRouter.GET("/nutrition/ingredients", h.ListNutritionIngredients)
+	unprotectedRouter.GET("/foods", h.ListFoods)
 	unprotectedRouter.GET("/nutrition/ingredient-links", h.ListIngredientNutritionLinks)
 	unprotectedRouter.GET("/nutrition/unit-aliases", h.ListUnitAliases)
 	protectedRouter.POST("/nutrition/ingredient-links", h.SubmitNutritionLinkSuggestion, authLimiter)

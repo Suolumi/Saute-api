@@ -3,28 +3,20 @@ package tests
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"recipes/internal/database"
 	mongorepo "recipes/internal/database/mongo"
 	"recipes/internal/models"
 )
 
-func insertTestNutritionIngredient(t *testing.T, db database.Database, ctx context.Context, name string) primitive.ObjectID {
+// seedTestFoods inserts the embedded food list and returns one food id.
+func seedTestFoods(t *testing.T, db database.Database, ctx context.Context) string {
 	t.Helper()
-	id := primitive.NewObjectID()
-	_, err := db.RawDatabase().Collection("nutrition_ingredients").InsertOne(ctx, bson.M{
-		"_id": id, "name": name, "name_lower": name, "kcal_per_100g": 350.0,
-		"protein_g_per_100g": 10.0, "carbs_g_per_100g": 70.0, "fat_g_per_100g": 1.0,
-		"salt_g_per_100g": 0.0, "sugar_g_per_100g": 0.0, "created_at": time.Now().UTC(),
-	})
-	require.NoError(t, err)
-	return id
+	require.NoError(t, db.MigrateFoods(ctx))
+	return "flour"
 }
 
 // TestNutritionLinkFreshNameAppliesDirectly covers the no-review path: an
@@ -36,12 +28,12 @@ func TestNutritionLinkFreshNameAppliesDirectly(t *testing.T) {
 	svc := newTestRecipeService(t, db)
 
 	submitter := insertTestUser(t, db, ctx, "ns-fresh-submitter")
-	wheatFlour := insertTestNutritionIngredient(t, db, ctx, "Farine de blé")
+	wheatFlour := seedTestFoods(t, db, ctx)
 
 	density := 53.0
 	gramsPerUnit := 120.0
 	result, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: wheatFlour.Hex(), GPer100ml: &density, GramsPerUnit: &gramsPerUnit,
+		IngredientName: "Flour", FoodID: wheatFlour, GPer100ml: &density, GramsPerUnit: &gramsPerUnit,
 	})
 	require.NoError(t, err)
 	assert.True(t, result.Applied, "a fresh ingredient name has no existing link to correct, so it applies immediately")
@@ -51,7 +43,7 @@ func TestNutritionLinkFreshNameAppliesDirectly(t *testing.T) {
 	link, err := db.GetIngredientNutritionLinkByNameLower(ctx, "flour")
 	require.NoError(t, err)
 	assert.Equal(t, "Flour", link.Name)
-	assert.Equal(t, wheatFlour, link.NutritionID)
+	assert.Equal(t, wheatFlour, link.FoodID)
 	require.NotNil(t, link.GPer100ml)
 	assert.Equal(t, 53.0, *link.GPer100ml)
 }
@@ -71,12 +63,12 @@ func TestNutritionLinkCorrectionBecomesSuggestionUntilApproved(t *testing.T) {
 
 	admin := insertTestUser(t, db, ctx, "ns-correction-admin")
 	submitter := insertTestUser(t, db, ctx, "ns-correction-submitter")
-	wheatFlour := insertTestNutritionIngredient(t, db, ctx, "Farine de blé")
+	wheatFlour := seedTestFoods(t, db, ctx)
 
 	density := 53.0
 	gramsPerUnit := 120.0
 	first, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "Flour", NutritionID: wheatFlour.Hex(), GPer100ml: &density, GramsPerUnit: &gramsPerUnit,
+		IngredientName: "Flour", FoodID: wheatFlour, GPer100ml: &density, GramsPerUnit: &gramsPerUnit,
 	})
 	require.NoError(t, err)
 	require.True(t, first.Applied)
@@ -87,7 +79,7 @@ func TestNutritionLinkCorrectionBecomesSuggestionUntilApproved(t *testing.T) {
 	// instead of applying directly.
 	correctedDensity := 60.0
 	second, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "flour", NutritionID: wheatFlour.Hex(), GPer100ml: &correctedDensity,
+		IngredientName: "flour", FoodID: wheatFlour, GPer100ml: &correctedDensity,
 	})
 	require.NoError(t, err)
 	assert.False(t, second.Applied, "overwriting an already-set density requires review")
@@ -121,18 +113,17 @@ func TestNutritionLinkRejectedCorrectionLeavesLinkUnchanged(t *testing.T) {
 
 	admin := insertTestUser(t, db, ctx, "ns-reject-admin")
 	submitter := insertTestUser(t, db, ctx, "ns-reject-submitter")
-	wheatFlour := insertTestNutritionIngredient(t, db, ctx, "Farine de blé")
+	wheatFlour := seedTestFoods(t, db, ctx)
 
 	gramsPerUnit := 5.0
 	first, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "Sugar", NutritionID: wheatFlour.Hex(), GramsPerUnit: &gramsPerUnit,
+		IngredientName: "Sugar", FoodID: wheatFlour, GramsPerUnit: &gramsPerUnit,
 	})
 	require.NoError(t, err)
 	require.True(t, first.Applied)
 
-	otherNutritionID := insertTestNutritionIngredient(t, db, ctx, "Autre")
 	second, err := svc.SubmitNutritionLinkSuggestion(ctx, submitter.Hex(), models.SubmitNutritionLinkRequest{
-		IngredientName: "sugar", NutritionID: otherNutritionID.Hex(),
+		IngredientName: "sugar", FoodID: "rye-flour",
 	})
 	require.NoError(t, err)
 	require.False(t, second.Applied)
@@ -154,17 +145,17 @@ func TestAdminNutritionLinkCRUDAppliesImmediately(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	svc := newTestRecipeService(t, db)
-	wheatFlour := insertTestNutritionIngredient(t, db, ctx, "Farine de blé")
+	wheatFlour := seedTestFoods(t, db, ctx)
 
 	created, err := svc.AdminCreateNutritionLink(ctx, models.AdminNutritionLinkRequest{
-		IngredientName: "Butter", NutritionID: wheatFlour.Hex(),
+		IngredientName: "Butter", FoodID: wheatFlour,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created.Id)
 
 	density := 96.0
 	updated, err := svc.AdminUpdateNutritionLink(ctx, created.Id.Hex(), models.AdminNutritionLinkRequest{
-		IngredientName: "Butter", NutritionID: wheatFlour.Hex(), GPer100ml: &density,
+		IngredientName: "Butter", FoodID: wheatFlour, GPer100ml: &density,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, updated.GPer100ml)

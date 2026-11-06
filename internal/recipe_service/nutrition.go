@@ -22,13 +22,6 @@ const (
 	maxNutritionNoteLength   = 500
 )
 
-// ListNutritionIngredients returns the full curated Ciqual-derived reference
-// list, for client-side matching - small and curated, same posture as the
-// Toolbox lists.
-func (s *Service) ListNutritionIngredients(ctx context.Context) ([]models.NutritionIngredient, error) {
-	return s.db.ListNutritionIngredients(ctx)
-}
-
 // ListIngredientNutritionLinks returns every ingredient-name -> nutrition
 // link, so the authoring UI can tell an already-linked ingredient from one
 // with no link yet.
@@ -66,14 +59,8 @@ func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID stri
 	if name == "" || len(name) > maxNutritionNameLength {
 		return models.SubmitNutritionLinkResponse{}, fmt.Errorf("%w: ingredient name must be between 1 and %d characters", ErrInvalid, maxNutritionNameLength)
 	}
-	nutritionID, err := primitive.ObjectIDFromHex(req.NutritionID)
+	food, err := s.getFood(ctx, req.FoodID)
 	if err != nil {
-		return models.SubmitNutritionLinkResponse{}, fmt.Errorf("%w: invalid nutrition_id", ErrInvalid)
-	}
-	if _, err := s.db.GetNutritionIngredientById(ctx, nutritionID.Hex()); err != nil {
-		if errors.Is(err, mongorepo.NutritionEntryNotFoundError) {
-			return models.SubmitNutritionLinkResponse{}, ErrNutritionIngredientNotFound
-		}
 		return models.SubmitNutritionLinkResponse{}, err
 	}
 	if req.GPer100ml != nil && (*req.GPer100ml < minNutritionGPer100ml || *req.GPer100ml > maxNutritionGPer100ml) {
@@ -131,19 +118,19 @@ func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID stri
 		mergedGramsPerUnit = existingLink.GramsPerUnit
 	}
 
-	if err := s.validateIngredientUnitRequirement(ctx, req.IngredientUnit, mergedGPer100ml, mergedGramsPerUnit); err != nil {
+	if err := s.validateIngredientUnitRequirement(ctx, req.IngredientUnit, firstSet(mergedGPer100ml, food.GPer100ml), firstSet(mergedGramsPerUnit, food.GramsPerPiece)); err != nil {
 		return models.SubmitNutritionLinkResponse{}, err
 	}
 
-	needsReview := needsNutritionLinkReview(existingLink, nutritionID, req.GPer100ml, req.GramsPerUnit) ||
+	needsReview := needsNutritionLinkReview(existingLink, food.Id, req.GPer100ml, req.GramsPerUnit) ||
 		(unitID != nil && existingUnitAlias != nil && existingUnitAlias.UnitID != *unitID)
 
 	if !needsReview {
 		var link models.IngredientNutritionLink
 		if existingLink == nil {
-			link, err = s.db.CreateIngredientNutritionLink(ctx, name, nutritionID, mergedGPer100ml, mergedGramsPerUnit)
+			link, err = s.db.CreateIngredientNutritionLink(ctx, name, food.Id, mergedGPer100ml, mergedGramsPerUnit)
 		} else {
-			link, err = s.db.UpdateIngredientNutritionLink(ctx, existingLink.Id.Hex(), name, nutritionID, mergedGPer100ml, mergedGramsPerUnit)
+			link, err = s.db.UpdateIngredientNutritionLink(ctx, existingLink.Id.Hex(), name, food.Id, mergedGPer100ml, mergedGramsPerUnit)
 		}
 		if err != nil {
 			return models.SubmitNutritionLinkResponse{}, err
@@ -162,7 +149,7 @@ func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID stri
 	}
 	suggestion := models.NutritionSuggestion{
 		SubmittedBy: submittedBy, Note: note, TargetID: linkTargetID,
-		IngredientName: name, NutritionID: nutritionID, GPer100ml: mergedGPer100ml, GramsPerUnit: mergedGramsPerUnit,
+		IngredientName: name, FoodID: food.Id, GPer100ml: mergedGPer100ml, GramsPerUnit: mergedGramsPerUnit,
 	}
 	if unitID != nil {
 		suggestion.UnitAlias = unitAlias
@@ -178,15 +165,15 @@ func (s *Service) SubmitNutritionLinkSuggestion(ctx context.Context, userID stri
 	return models.SubmitNutritionLinkResponse{Applied: false, Suggestion: &created}, nil
 }
 
-// needsNutritionLinkReview reports whether applying nutritionID/gPer100ml/
+// needsNutritionLinkReview reports whether applying foodID/gPer100ml/
 // gramsPerUnit on top of existing would overwrite a value existing already
 // had - a nil existing (no link yet) never needs review, and a field the
 // request leaves blank never counts as an overwrite of that field.
-func needsNutritionLinkReview(existing *models.IngredientNutritionLink, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) bool {
+func needsNutritionLinkReview(existing *models.IngredientNutritionLink, foodID string, gPer100ml, gramsPerUnit *float64) bool {
 	if existing == nil {
 		return false
 	}
-	if existing.NutritionID != nutritionID {
+	if existing.FoodID != foodID {
 		return true
 	}
 	if existing.GPer100ml != nil && gPer100ml != nil && *existing.GPer100ml != *gPer100ml {
@@ -203,7 +190,8 @@ func needsNutritionLinkReview(existing *models.IngredientNutritionLink, nutritio
 // one specific recipe ingredient's current unit) will actually resolve:
 // mirrors resolveIngredientGrams's own resolution order, so a weight unit
 // needs neither field, a volume unit needs a density, and a blank or
-// unrecognized unit needs a per-unit weight. The admin CRUD endpoints never
+// unrecognized unit needs a per-unit weight. Callers pass the values with
+// the food's defaults filled in. The admin CRUD endpoints never
 // call this - a link there isn't tied to any one ingredient's unit.
 func (s *Service) validateIngredientUnitRequirement(ctx context.Context, unitText string, gPer100ml, gramsPerUnit *float64) error {
 	unitText = strings.TrimSpace(unitText)
@@ -238,20 +226,20 @@ func (s *Service) validateIngredientUnitRequirement(ctx context.Context, unitTex
 // name would just be shadowed by whichever resolveIngredientGrams' lookup
 // returns first - callers should update, not re-create, for a correction).
 func (s *Service) AdminCreateNutritionLink(ctx context.Context, req models.AdminNutritionLinkRequest) (models.IngredientNutritionLink, error) {
-	name, nutritionID, err := s.validateNutritionLinkFields(ctx, req.IngredientName, req.NutritionID, req.GPer100ml, req.GramsPerUnit)
+	name, foodID, err := s.validateNutritionLinkFields(ctx, req.IngredientName, req.FoodID, req.GPer100ml, req.GramsPerUnit)
 	if err != nil {
 		return models.IngredientNutritionLink{}, err
 	}
-	return s.db.CreateIngredientNutritionLink(ctx, name, nutritionID, req.GPer100ml, req.GramsPerUnit)
+	return s.db.CreateIngredientNutritionLink(ctx, name, foodID, req.GPer100ml, req.GramsPerUnit)
 }
 
 // AdminUpdateNutritionLink directly overwrites an existing link - admin-only.
 func (s *Service) AdminUpdateNutritionLink(ctx context.Context, id string, req models.AdminNutritionLinkRequest) (models.IngredientNutritionLink, error) {
-	name, nutritionID, err := s.validateNutritionLinkFields(ctx, req.IngredientName, req.NutritionID, req.GPer100ml, req.GramsPerUnit)
+	name, foodID, err := s.validateNutritionLinkFields(ctx, req.IngredientName, req.FoodID, req.GPer100ml, req.GramsPerUnit)
 	if err != nil {
 		return models.IngredientNutritionLink{}, err
 	}
-	updated, err := s.db.UpdateIngredientNutritionLink(ctx, id, name, nutritionID, req.GPer100ml, req.GramsPerUnit)
+	updated, err := s.db.UpdateIngredientNutritionLink(ctx, id, name, foodID, req.GPer100ml, req.GramsPerUnit)
 	if err != nil {
 		return models.IngredientNutritionLink{}, nutritionEntryError(err)
 	}
@@ -266,28 +254,31 @@ func (s *Service) AdminDeleteNutritionLink(ctx context.Context, id string) error
 	return nil
 }
 
-func (s *Service) validateNutritionLinkFields(ctx context.Context, ingredientName, nutritionIDHex string, gPer100ml, gramsPerUnit *float64) (string, primitive.ObjectID, error) {
+func (s *Service) validateNutritionLinkFields(ctx context.Context, ingredientName, foodID string, gPer100ml, gramsPerUnit *float64) (string, string, error) {
 	name := strings.TrimSpace(ingredientName)
 	if name == "" || len(name) > maxNutritionNameLength {
-		return "", primitive.ObjectID{}, fmt.Errorf("%w: ingredient name must be between 1 and %d characters", ErrInvalid, maxNutritionNameLength)
+		return "", "", fmt.Errorf("%w: ingredient name must be between 1 and %d characters", ErrInvalid, maxNutritionNameLength)
 	}
-	nutritionID, err := primitive.ObjectIDFromHex(nutritionIDHex)
+	food, err := s.getFood(ctx, foodID)
 	if err != nil {
-		return "", primitive.ObjectID{}, fmt.Errorf("%w: invalid nutrition_id", ErrInvalid)
-	}
-	if _, err := s.db.GetNutritionIngredientById(ctx, nutritionID.Hex()); err != nil {
-		if errors.Is(err, mongorepo.NutritionEntryNotFoundError) {
-			return "", primitive.ObjectID{}, ErrNutritionIngredientNotFound
-		}
-		return "", primitive.ObjectID{}, err
+		return "", "", err
 	}
 	if gPer100ml != nil && (*gPer100ml < minNutritionGPer100ml || *gPer100ml > maxNutritionGPer100ml) {
-		return "", primitive.ObjectID{}, fmt.Errorf("%w: density must be between %g and %g grams per 100ml", ErrInvalid, minNutritionGPer100ml, maxNutritionGPer100ml)
+		return "", "", fmt.Errorf("%w: density must be between %g and %g grams per 100ml", ErrInvalid, minNutritionGPer100ml, maxNutritionGPer100ml)
 	}
 	if gramsPerUnit != nil && (*gramsPerUnit < minNutritionGramsPerUnit || *gramsPerUnit > maxNutritionGramsPerUnit) {
-		return "", primitive.ObjectID{}, fmt.Errorf("%w: grams per unit must be between %g and %g", ErrInvalid, minNutritionGramsPerUnit, maxNutritionGramsPerUnit)
+		return "", "", fmt.Errorf("%w: grams per unit must be between %g and %g", ErrInvalid, minNutritionGramsPerUnit, maxNutritionGramsPerUnit)
 	}
-	return name, nutritionID, nil
+	return name, food.Id, nil
+}
+
+// getFood looks a food up by id, mapping a miss to ErrFoodNotFound.
+func (s *Service) getFood(ctx context.Context, id string) (models.FoodItem, error) {
+	food, err := s.db.GetFoodById(ctx, strings.TrimSpace(id))
+	if errors.Is(err, mongorepo.FoodNotFoundError) {
+		return models.FoodItem{}, ErrFoodNotFound
+	}
+	return food, err
 }
 
 // ListUnitAliases returns every alias, for the admin back-office's Links tab.
@@ -370,12 +361,12 @@ func (s *Service) ListNutritionSuggestionsForAdmin(ctx context.Context, status s
 			Id: suggestion.Id, TargetID: suggestion.TargetID, IsCorrection: suggestion.TargetID != nil,
 			SubmittedBy: suggestion.SubmittedBy, SubmittedByUsername: users[suggestion.SubmittedBy.Hex()].Username,
 			Note: suggestion.Note, Status: suggestion.Status, CreatedAt: suggestion.CreatedAt, ReviewedAt: suggestion.ReviewedAt,
-			IngredientName: suggestion.IngredientName, NutritionID: suggestion.NutritionID,
+			IngredientName: suggestion.IngredientName, FoodID: suggestion.FoodID,
 			GPer100ml: suggestion.GPer100ml, GramsPerUnit: suggestion.GramsPerUnit,
 			UnitAlias: suggestion.UnitAlias, IsUnitCorrection: suggestion.UnitTargetID != nil,
 		}
-		if nutrition, err := s.db.GetNutritionIngredientById(ctx, suggestion.NutritionID.Hex()); err == nil {
-			view.NutritionName = nutrition.Name
+		if food, err := s.db.GetFoodById(ctx, suggestion.FoodID); err == nil {
+			view.FoodName = foodDisplayName(food)
 		}
 		if suggestion.UnitID != nil {
 			if unit, err := s.db.GetToolboxUnitById(ctx, suggestion.UnitID.Hex()); err == nil {
@@ -405,10 +396,10 @@ func (s *Service) ApproveNutritionSuggestion(ctx context.Context, id, adminID st
 	}
 
 	if suggestion.TargetID != nil {
-		if _, err := s.db.UpdateIngredientNutritionLink(ctx, suggestion.TargetID.Hex(), suggestion.IngredientName, suggestion.NutritionID, suggestion.GPer100ml, suggestion.GramsPerUnit); err != nil {
+		if _, err := s.db.UpdateIngredientNutritionLink(ctx, suggestion.TargetID.Hex(), suggestion.IngredientName, suggestion.FoodID, suggestion.GPer100ml, suggestion.GramsPerUnit); err != nil {
 			return models.NutritionSuggestion{}, nutritionEntryError(err)
 		}
-	} else if _, err := s.db.CreateIngredientNutritionLink(ctx, suggestion.IngredientName, suggestion.NutritionID, suggestion.GPer100ml, suggestion.GramsPerUnit); err != nil {
+	} else if _, err := s.db.CreateIngredientNutritionLink(ctx, suggestion.IngredientName, suggestion.FoodID, suggestion.GPer100ml, suggestion.GramsPerUnit); err != nil {
 		return models.NutritionSuggestion{}, err
 	}
 
@@ -431,7 +422,7 @@ func (s *Service) ApproveNutritionSuggestion(ctx context.Context, id, adminID st
 
 func nutritionEntryError(err error) error {
 	if errors.Is(err, mongorepo.NutritionEntryNotFoundError) {
-		return ErrNutritionIngredientNotFound
+		return ErrFoodNotFound
 	}
 	return err
 }
@@ -478,13 +469,6 @@ func (t nutritionTotals) round1() nutritionTotals {
 	return nutritionTotals{Kcal: r(t.Kcal), Protein: r(t.Protein), Carbs: r(t.Carbs), Fat: r(t.Fat), Salt: r(t.Salt), Sugar: r(t.Sugar)}
 }
 
-// nutritionUnitContext bundles the Toolbox unit list and ingredient-density
-// map computeRecipeNutrition needs to resolve quantities to grams.
-type nutritionUnitContext struct {
-	units                     []models.ToolboxUnit
-	toolboxDensityByNameLower map[string]float64
-}
-
 // GetRecipeNutrition computes best-effort nutrition totals for one recipe at
 // the given serving count (0 or negative means "the recipe's own base
 // servings", i.e. no scaling). Always matches against the recipe's
@@ -513,13 +497,12 @@ func (s *Service) GetRecipeNutrition(ctx context.Context, recipeID string, servi
 	if err != nil {
 		return models.RecipeNutrition{}, err
 	}
-	toolboxIngredients, err := s.db.ListToolboxIngredients(ctx)
+	foods, err := s.db.ListFoods(ctx)
 	if err != nil {
 		return models.RecipeNutrition{}, err
 	}
-	unitCtx := nutritionUnitContext{units: units, toolboxDensityByNameLower: toolboxDensityByName(toolboxIngredients, recipe.SourceLocale)}
 
-	totals, lines, matched := s.computeRecipeNutrition(ctx, recipe, unitCtx)
+	totals, lines, matched := s.computeRecipeNutrition(ctx, recipe, units, newFoodIndex(foods, recipe.SourceLocale))
 
 	scaledLines := make([]models.IngredientNutrition, len(lines))
 	for i, line := range lines {
@@ -538,30 +521,11 @@ func (s *Service) GetRecipeNutrition(ctx context.Context, recipeID string, servi
 	}, nil
 }
 
-// toolboxDensityByName maps each Toolbox ingredient's lowercased source name,
-// then its name translated into sourceLocale, to its density. A recipe
-// written in Chinese then finds the density of "Milk" under "牛奶".
-func toolboxDensityByName(items []models.ToolboxIngredient, sourceLocale string) map[string]float64 {
-	densities := make(map[string]float64, len(items))
-	for _, ti := range items {
-		if _, ok := densities[ti.NameLower]; !ok {
-			densities[ti.NameLower] = ti.GPer100ml
-		}
-	}
-	for _, ti := range items {
-		key := strings.ToLower(ti.Translations[sourceLocale].Name)
-		if _, ok := densities[key]; key != "" && !ok {
-			densities[key] = ti.GPer100ml
-		}
-	}
-	return densities
-}
-
 // computeRecipeNutrition sums recipe's ingredients at recipe's own base
 // servings (no ratio applied - GetRecipeNutrition scales the result once at
 // the end). A recipe_ref ingredient is always left unmatched: its quantity
 // has no reliable conversion into a share of the referenced recipe.
-func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Recipe, unitCtx nutritionUnitContext) (nutritionTotals, []models.IngredientNutrition, int) {
+func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Recipe, units []models.ToolboxUnit, foods foodIndex) (nutritionTotals, []models.IngredientNutrition, int) {
 	var totals nutritionTotals
 	matched := 0
 	lines := make([]models.IngredientNutrition, len(recipe.Ingredients))
@@ -570,18 +534,15 @@ func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Reci
 		if ingredient.RecipeRef != nil || strings.TrimSpace(ingredient.Name) == "" {
 			continue
 		}
-		link, err := s.db.GetIngredientNutritionLinkByNameLower(ctx, strings.ToLower(ingredient.Name))
-		if err != nil {
-			continue
-		}
-		grams, ok := s.resolveIngredientGrams(ctx, ingredient, link, unitCtx.units, unitCtx.toolboxDensityByNameLower)
+		match, ok := s.matchIngredientFood(ctx, ingredient.Name, foods)
 		if !ok {
 			continue
 		}
-		nutrition, err := s.db.GetNutritionIngredientById(ctx, link.NutritionID.Hex())
-		if err != nil {
+		grams, ok := s.resolveIngredientGrams(ctx, ingredient, match.gPer100ml, match.gramsPerPiece, units)
+		if !ok {
 			continue
 		}
+		nutrition := match.food
 		matched++
 		factor := grams / 100
 		line := models.IngredientNutrition{
@@ -594,11 +555,10 @@ func (s *Service) computeRecipeNutrition(ctx context.Context, recipe models.Reci
 	return totals, lines, matched
 }
 
-// resolveIngredientGrams converts one ingredient's quantity to grams via its
-// link, in the order described in docs/nutrition.md "Resolving a quantity
-// to grams": a resolvable weight/volume unit first, falling back to a
-// per-unit count when the unit is blank or unrecognized, else unresolved.
-func (s *Service) resolveIngredientGrams(ctx context.Context, ingredient models.Ingredient, link models.IngredientNutritionLink, units []models.ToolboxUnit, toolboxDensityByNameLower map[string]float64) (float64, bool) {
+// resolveIngredientGrams converts one ingredient's quantity to grams: a
+// weight unit directly, a volume unit through gPer100ml, and a blank or
+// unrecognized unit as a count of gramsPerPiece.
+func (s *Service) resolveIngredientGrams(ctx context.Context, ingredient models.Ingredient, gPer100ml, gramsPerPiece *float64, units []models.ToolboxUnit) (float64, bool) {
 	if ingredient.Quantity <= 0 {
 		return 0, false
 	}
@@ -608,20 +568,14 @@ func (s *Service) resolveIngredientGrams(ctx context.Context, ingredient models.
 			if unit.Kind == models.ToolboxUnitWeight {
 				return ingredient.Quantity * unit.ToBase, true
 			}
-			density := link.GPer100ml
-			if density == nil {
-				if d, ok := toolboxDensityByNameLower[strings.ToLower(ingredient.Name)]; ok {
-					density = &d
-				}
-			}
-			if density == nil {
+			if gPer100ml == nil {
 				return 0, false
 			}
-			return ingredient.Quantity * unit.ToBase * (*density) / 100, true
+			return ingredient.Quantity * unit.ToBase * (*gPer100ml) / 100, true
 		}
 	}
-	if link.GramsPerUnit != nil {
-		return ingredient.Quantity * (*link.GramsPerUnit), true
+	if gramsPerPiece != nil {
+		return ingredient.Quantity * (*gramsPerPiece), true
 	}
 	return 0, false
 }

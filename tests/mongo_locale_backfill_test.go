@@ -35,30 +35,6 @@ func newLocaleTestDB(t *testing.T) (database.Database, context.Context) {
 	return db, ctx
 }
 
-func TestSeedNutritionDefaultsFillsMissingNamesOnly(t *testing.T) {
-	db, ctx := newLocaleTestDB(t)
-	require.NoError(t, db.SeedToolboxDefaults(ctx))
-	require.NoError(t, db.SeedNutritionDefaults(ctx))
-
-	foods := db.RawDatabase().Collection("nutrition_ingredients")
-	// Simulate a database seeded before zh names existed, plus an admin edit.
-	_, err := foods.UpdateMany(ctx, bson.M{}, bson.M{"$unset": bson.M{"names.zh": ""}})
-	require.NoError(t, err)
-	_, err = foods.UpdateOne(ctx, bson.M{"name_lower": "pastis"}, bson.M{"$set": bson.M{"names.zh": "admin"}})
-	require.NoError(t, err)
-
-	require.NoError(t, db.SeedNutritionDefaults(ctx))
-
-	missing, err := foods.CountDocuments(ctx, bson.M{"names.zh": bson.M{"$in": bson.A{nil, ""}}})
-	require.NoError(t, err)
-	assert.Zero(t, missing)
-	var pastis struct {
-		Names map[string]string `bson:"names"`
-	}
-	require.NoError(t, foods.FindOne(ctx, bson.M{"name_lower": "pastis"}).Decode(&pastis))
-	assert.Equal(t, "admin", pastis.Names["zh"])
-}
-
 func TestSeedNutritionDefaultsAddsUnitAliasesOnce(t *testing.T) {
 	db, ctx := newLocaleTestDB(t)
 	require.NoError(t, db.SeedToolboxDefaults(ctx))

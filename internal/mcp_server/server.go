@@ -242,7 +242,7 @@ func New(cfg *config.MCPConfig, recipes *recipe_service.Service, verifier auth.T
 	mcp.AddTool(server, &mcp.Tool{Name: "update_recipe", Description: "Patch a recipe owned by the authenticated user and optionally reorder or remove existing pictures via keep_picture_ids. New pictures cannot be uploaded here; attach them via the website."}, result.update)
 	mcp.AddTool(server, &mcp.Tool{Name: "link_recipe_variation", Description: "Turn one of the authenticated user's own standalone recipes into a variation of another recipe (any author), found via search_recipes. Fails if the recipe is already a variation, already has its own variations, the target is itself a variation, categories don't match, or it would create a recipe that references its own family. Irreversible through this API."}, result.linkVariation)
 	mcp.AddTool(server, &mcp.Tool{Name: "list_tags", Description: "List the recipe tags (e.g. vegan, gluten-free, one-pot) usable in create_recipe, update_recipe and search_recipes, with their group, the categories (food/diy) they apply to, the tags each one implies, and a label in the requested locale."}, result.listTags)
-	mcp.AddTool(server, &mcp.Tool{Name: "convert_quantity", Description: "Convert an amount from one Toolbox unit to another (e.g. grams to cups). ingredient is only needed when from_unit and to_unit are different kinds (one weight, one converting to/from volume) - it looks up that ingredient's density. Not needed when both units are the same kind (e.g. g to kg)."}, result.convertQuantity)
+	mcp.AddTool(server, &mcp.Tool{Name: "convert_quantity", Description: "Convert an amount from one Toolbox unit to another (e.g. grams to cups). ingredient is only needed when from_unit and to_unit are different kinds (one weight, one converting to/from volume) - it looks up that food's density by name or alias, in English, French, Finnish or Chinese. Not needed when both units are the same kind (e.g. g to kg)."}, result.convertQuantity)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_recipe_nutrition", Description: "Get best-effort computed nutrition (calories + headline macros) for any recipe (not just the authenticated user's own) at a given serving count. Only ingredients confidently linked to the nutrition reference list are counted - matched_count/total_count says how much of the recipe's ingredient list actually contributed, since some ingredients may be unlinked or unresolvable."}, result.getRecipeNutrition)
 	stream := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
 		Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 90 << 20, PropagateRequestCancellation: true,
@@ -563,7 +563,7 @@ type ConvertQuantityInput struct {
 	Amount     float64 `json:"amount" jsonschema:"Amount to convert"`
 	FromUnit   string  `json:"from_unit" jsonschema:"Unit name or symbol to convert from, e.g. 'g' or 'cup' - see the Toolbox's unit list"`
 	ToUnit     string  `json:"to_unit" jsonschema:"Unit name or symbol to convert to"`
-	Ingredient string  `json:"ingredient,omitempty" jsonschema:"Ingredient name to look up density for, e.g. 'Milk' - required only when from_unit and to_unit are different kinds (one weight, one volume)"`
+	Ingredient string  `json:"ingredient,omitempty" jsonschema:"Food name to look up density for, e.g. 'Milk' or 'lait' - required only when from_unit and to_unit are different kinds (one weight, one volume)"`
 }
 
 type ConvertQuantityOutput struct {
@@ -579,16 +579,6 @@ func findToolboxUnit(units []models.ToolboxUnit, query string) (models.ToolboxUn
 		}
 	}
 	return models.ToolboxUnit{}, false
-}
-
-func findToolboxIngredient(ingredients []models.ToolboxIngredient, query string) (models.ToolboxIngredient, bool) {
-	q := strings.ToLower(strings.TrimSpace(query))
-	for _, ingredient := range ingredients {
-		if strings.ToLower(ingredient.Name) == q {
-			return ingredient, true
-		}
-	}
-	return models.ToolboxIngredient{}, false
 }
 
 func (s *Server) convertQuantity(ctx context.Context, req *mcp.CallToolRequest, input ConvertQuantityInput) (*mcp.CallToolResult, ConvertQuantityOutput, error) {
@@ -615,15 +605,17 @@ func (s *Server) convertQuantity(ctx context.Context, req *mcp.CallToolRequest, 
 		if strings.TrimSpace(input.Ingredient) == "" {
 			return nil, ConvertQuantityOutput{}, fmt.Errorf("ingredient is required to convert between a weight and a volume unit")
 		}
-		ingredients, err := s.recipes.ListToolboxIngredients(ctx, "")
+		food, ok, err := s.recipes.FindFood(ctx, input.Ingredient)
 		if err != nil {
 			return nil, ConvertQuantityOutput{}, err
 		}
-		ingredient, ok := findToolboxIngredient(ingredients, input.Ingredient)
 		if !ok {
 			return nil, ConvertQuantityOutput{}, fmt.Errorf("unknown ingredient %q", input.Ingredient)
 		}
-		density = ingredient.GPer100ml
+		if food.GPer100ml == nil {
+			return nil, ConvertQuantityOutput{}, fmt.Errorf("no known density for %q", input.Ingredient)
+		}
+		density = *food.GPer100ml
 	}
 
 	fromBase := input.Amount * fromUnit.ToBase

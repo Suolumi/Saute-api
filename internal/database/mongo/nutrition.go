@@ -2,8 +2,6 @@ package mongo
 
 import (
 	"context"
-	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,7 +16,6 @@ import (
 )
 
 const (
-	nutritionIngredientsCollection = "nutrition_ingredients"
 	nutritionLinksCollection       = "ingredient_nutrition_links"
 	unitAliasesCollection          = "unit_aliases"
 	nutritionSuggestionsCollection = "nutrition_suggestions"
@@ -27,41 +24,11 @@ const (
 var NutritionEntryNotFoundError = errors.New("nutrition entry not found")
 var NutritionSuggestionNotFoundError = errors.New("nutrition suggestion not found")
 
-// --- Nutrition ingredients (Ciqual seed, read-only after seeding) ---
-
-func (c *Client) ListNutritionIngredients(ctx context.Context) ([]models.NutritionIngredient, error) {
-	cursor, err := c.db.Collection(nutritionIngredientsCollection).Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "name", Value: 1}}))
-	if err != nil {
-		return nil, err
-	}
-	items := []models.NutritionIngredient{}
-	if err := cursor.All(ctx, &items); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-func (c *Client) GetNutritionIngredientById(ctx context.Context, id string) (models.NutritionIngredient, error) {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return models.NutritionIngredient{}, NutritionEntryNotFoundError
-	}
-	var item models.NutritionIngredient
-	err = c.db.Collection(nutritionIngredientsCollection).FindOne(ctx, bson.D{{Key: "_id", Value: objectID}}).Decode(&item)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return models.NutritionIngredient{}, NutritionEntryNotFoundError
-		}
-		return models.NutritionIngredient{}, err
-	}
-	return item, nil
-}
-
 // --- Ingredient nutrition links ---
 
-func (c *Client) CreateIngredientNutritionLink(ctx context.Context, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+func (c *Client) CreateIngredientNutritionLink(ctx context.Context, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
 	entry := models.IngredientNutritionLink{
-		Name: name, NameLower: strings.ToLower(name), NutritionID: nutritionID,
+		Name: name, NameLower: strings.ToLower(name), FoodID: foodID,
 		GPer100ml: gPer100ml, GramsPerUnit: gramsPerUnit, CreatedAt: time.Now().UTC(),
 	}
 	result, err := c.db.Collection(nutritionLinksCollection).InsertOne(ctx, entry)
@@ -73,14 +40,14 @@ func (c *Client) CreateIngredientNutritionLink(ctx context.Context, name string,
 	return entry, nil
 }
 
-func (c *Client) UpdateIngredientNutritionLink(ctx context.Context, id string, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+func (c *Client) UpdateIngredientNutritionLink(ctx context.Context, id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
 	objectID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
 		return models.IngredientNutritionLink{}, NutritionEntryNotFoundError
 	}
 	set := bson.D{
 		{Key: "name", Value: name}, {Key: "name_lower", Value: strings.ToLower(name)},
-		{Key: "nutrition_id", Value: nutritionID},
+		{Key: "food_id", Value: foodID},
 	}
 	if gPer100ml != nil {
 		set = append(set, bson.E{Key: "g_per_100ml", Value: *gPer100ml})
@@ -123,7 +90,7 @@ func (c *Client) GetIngredientNutritionLinkById(ctx context.Context, id string) 
 
 // ListIngredientNutritionLinks returns every link - small and growing only
 // from suggestions (same "no pagination, client-filtered" posture as the
-// curated Ciqual list), so the authoring UI can tell "already linked" from
+// food list), so the authoring UI can tell "already linked" from
 // "no link yet" without a lookup per ingredient.
 func (c *Client) ListIngredientNutritionLinks(ctx context.Context) ([]models.IngredientNutritionLink, error) {
 	cursor, err := c.db.Collection(nutritionLinksCollection).Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "name", Value: 1}}))
@@ -333,116 +300,10 @@ func (c *Client) UpdateNutritionSuggestionStatus(ctx context.Context, id, status
 
 // --- Seeding ---
 
-//go:embed seeddata/nutrition_ciqual.json
-var nutritionCiqualSeed []byte
-
-type ciqualSeedRow struct {
-	Name        string            `json:"name"`
-	Names       map[string]string `json:"names"`
-	KcalPer100g float64           `json:"kcal_per_100g"`
-	ProteinG    float64           `json:"protein_g_per_100g"`
-	CarbsG      float64           `json:"carbs_g_per_100g"`
-	FatG        float64           `json:"fat_g_per_100g"`
-	SaltG       float64           `json:"salt_g_per_100g"`
-	SugarG      float64           `json:"sugar_g_per_100g"`
-}
-
-// SeedNutritionDefaults inserts the imported Ciqual reference list the first
-// time the collection is empty - idempotent, safe to call on every startup,
-// same posture as SeedToolboxDefaults. It never touches a non-empty
-// collection beyond filling translated names it lacks (see fillCiqualNames),
-// so admin edits/deletions are never undone. It also adds the default unit
-// aliases (see seedDefaultUnitAliases). IngredientNutritionLink and
-// NutritionSuggestion start empty and grow only from user suggestions.
+// SeedNutritionDefaults adds the default unit aliases that don't exist yet
+// (see seedDefaultUnitAliases). Links and suggestions start empty.
 func (c *Client) SeedNutritionDefaults(ctx context.Context) error {
-	var rows []ciqualSeedRow
-	if err := json.Unmarshal(nutritionCiqualSeed, &rows); err != nil {
-		return fmt.Errorf("parse embedded nutrition seed data: %w", err)
-	}
-	count, err := c.db.Collection(nutritionIngredientsCollection).CountDocuments(ctx, bson.D{})
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		if err := c.insertCiqualRows(ctx, rows); err != nil {
-			return err
-		}
-	} else if err := c.fillCiqualNames(ctx, rows); err != nil {
-		return err
-	}
 	return c.seedDefaultUnitAliases(ctx)
-}
-
-func (c *Client) insertCiqualRows(ctx context.Context, rows []ciqualSeedRow) error {
-	now := time.Now().UTC()
-	docs := make([]interface{}, 0, len(rows))
-	for _, row := range rows {
-		docs = append(docs, models.NutritionIngredient{
-			Name: row.Name, NameLower: strings.ToLower(row.Name), Names: row.Names,
-			KcalPer100g: row.KcalPer100g, ProteinG: row.ProteinG, CarbsG: row.CarbsG,
-			FatG: row.FatG, SaltG: row.SaltG, SugarG: row.SugarG, CreatedAt: now,
-		})
-	}
-	// InsertMany in batches: a single 3000+ document call is fine for Mongo's
-	// own limits (well under the 16MB/100k-document ceiling either way), but
-	// chunking keeps any single write comfortably small.
-	const batchSize = 500
-	collection := c.db.Collection(nutritionIngredientsCollection)
-	for i := 0; i < len(docs); i += batchSize {
-		end := min(i+batchSize, len(docs))
-		if _, err := collection.InsertMany(ctx, docs[i:end]); err != nil {
-			return fmt.Errorf("insert nutrition seed batch: %w", err)
-		}
-	}
-	return nil
-}
-
-// fillCiqualNames sets each seed row's translated names on the stored entry
-// with the same name, for locales whose name is still blank there. Lets a
-// locale added to the seed reach a database seeded before it, without
-// overwriting an admin's edit.
-func (c *Client) fillCiqualNames(ctx context.Context, rows []ciqualSeedRow) error {
-	seedNames := make(map[string]map[string]string) // locale -> name_lower -> name
-	for _, row := range rows {
-		for locale, name := range row.Names {
-			if seedNames[locale] == nil {
-				seedNames[locale] = make(map[string]string)
-			}
-			seedNames[locale][strings.ToLower(row.Name)] = name
-		}
-	}
-	collection := c.db.Collection(nutritionIngredientsCollection)
-	for locale, byName := range seedNames {
-		field := "names." + locale
-		cursor, err := collection.Find(ctx,
-			bson.D{{Key: field, Value: bson.D{{Key: "$in", Value: bson.A{nil, ""}}}}},
-			options.Find().SetProjection(bson.D{{Key: "name_lower", Value: 1}}))
-		if err != nil {
-			return err
-		}
-		var blanks []struct {
-			ID        primitive.ObjectID `bson:"_id"`
-			NameLower string             `bson:"name_lower"`
-		}
-		if err := cursor.All(ctx, &blanks); err != nil {
-			return err
-		}
-		var updates []mongo.WriteModel
-		for _, blank := range blanks {
-			if name, ok := byName[blank.NameLower]; ok {
-				updates = append(updates, mongo.NewUpdateOneModel().
-					SetFilter(bson.D{{Key: "_id", Value: blank.ID}}).
-					SetUpdate(bson.D{{Key: "$set", Value: bson.D{{Key: field, Value: name}}}}))
-			}
-		}
-		if len(updates) == 0 {
-			continue
-		}
-		if _, err := collection.BulkWrite(ctx, updates, options.BulkWrite().SetOrdered(false)); err != nil {
-			return fmt.Errorf("fill nutrition names for %s: %w", locale, err)
-		}
-	}
-	return nil
 }
 
 // defaultUnitAliases maps unit spellings the Toolbox units' own names and

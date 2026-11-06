@@ -10,14 +10,14 @@ import (
 	"recipes/internal/models"
 )
 
-// ListNutritionIngredients is GET /nutrition/ingredients - public, the full
-// curated Ciqual-derived reference list for client-side matching.
-func (h *Handlers) ListNutritionIngredients(c echo.Context) error {
-	items, err := h.recipes.ListNutritionIngredients(c.Request().Context())
+// ListFoods is GET /foods - public, the full curated food list for
+// client-side matching.
+func (h *Handlers) ListFoods(c echo.Context) error {
+	items, err := h.recipes.ListFoods(c.Request().Context())
 	if err != nil {
-		return errorResponse(http.StatusInternalServerError, "Could not list nutrition ingredients", err, c)
+		return errorResponse(http.StatusInternalServerError, "Could not list foods", err, c)
 	}
-	return c.JSON(http.StatusOK, models.ListNutritionIngredientsResponse{Items: items})
+	return c.JSON(http.StatusOK, models.ListFoodsResponse{Items: items})
 }
 
 // ListIngredientNutritionLinks is GET /nutrition/ingredient-links - public,

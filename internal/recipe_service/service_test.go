@@ -59,19 +59,16 @@ type fakeStore struct {
 	repointRecipeReferences int
 
 	listToolboxUnitsFn                      func() ([]models.ToolboxUnit, error)
-	listToolboxIngredientsFn                func() ([]models.ToolboxIngredient, error)
 	listToolboxSubstitutionsFn              func() ([]models.ToolboxSubstitution, error)
-	getToolboxIngredientByIdFn              func(id string) (models.ToolboxIngredient, error)
 	getToolboxUnitByIdFn                    func(id string) (models.ToolboxUnit, error)
 	getToolboxSubstitutionByIdFn            func(id string) (models.ToolboxSubstitution, error)
-	setToolboxIngredientTranslationsFn      func(id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error
 	setToolboxUnitTranslationsFn            func(id, sourceLocale string, translations map[string]models.ToolboxUnitTranslation) error
 	setToolboxSubstitutionTranslationsFn    func(id, sourceLocale string, translations map[string]models.ToolboxSubstitutionTranslation) error
-	getNutritionIngredientByIdFn            func(id string) (models.NutritionIngredient, error)
 	getIngredientNutritionLinkByNameLowerFn func(nameLower string) (models.IngredientNutritionLink, error)
 	getUnitAliasByAliasLowerFn              func(aliasLower string) (models.UnitAlias, error)
-	createIngredientNutritionLinkFn         func(name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
-	updateIngredientNutritionLinkFn         func(id, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	listFoodsFn                             func() ([]models.FoodItem, error)
+	createIngredientNutritionLinkFn         func(name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
+	updateIngredientNutritionLinkFn         func(id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error)
 	createUnitAliasFn                       func(alias string, unitID primitive.ObjectID) (models.UnitAlias, error)
 
 	// feedback is the in-memory feedback collection (see feedback_test.go).
@@ -271,34 +268,6 @@ func (f *fakeStore) DeleteTranslationOverridesByFieldPrefix(_ context.Context, r
 	return nil
 }
 
-func (f *fakeStore) CreateToolboxIngredient(context.Context, string, float64, string) (models.ToolboxIngredient, error) {
-	return models.ToolboxIngredient{}, nil
-}
-func (f *fakeStore) UpdateToolboxIngredient(context.Context, string, string, float64, string) (models.ToolboxIngredient, error) {
-	return models.ToolboxIngredient{}, nil
-}
-func (f *fakeStore) ListToolboxIngredients(context.Context) ([]models.ToolboxIngredient, error) {
-	if f.listToolboxIngredientsFn != nil {
-		return f.listToolboxIngredientsFn()
-	}
-	return nil, nil
-}
-func (f *fakeStore) GetToolboxIngredientById(_ context.Context, id string) (models.ToolboxIngredient, error) {
-	if f.getToolboxIngredientByIdFn != nil {
-		return f.getToolboxIngredientByIdFn(id)
-	}
-	return models.ToolboxIngredient{}, nil
-}
-func (f *fakeStore) GetToolboxIngredientByNameLower(context.Context, string) (models.ToolboxIngredient, error) {
-	return models.ToolboxIngredient{}, mongorepo.ToolboxEntryNotFoundError
-}
-func (f *fakeStore) SetToolboxIngredientTranslations(_ context.Context, id, sourceLocale string, translations map[string]models.ToolboxIngredientTranslation) error {
-	if f.setToolboxIngredientTranslationsFn != nil {
-		return f.setToolboxIngredientTranslationsFn(id, sourceLocale, translations)
-	}
-	return nil
-}
-
 func (f *fakeStore) CreateToolboxUnit(context.Context, string, string, string, float64) (models.ToolboxUnit, error) {
 	return models.ToolboxUnit{}, nil
 }
@@ -355,38 +324,33 @@ func (f *fakeStore) SetToolboxSubstitutionTranslations(_ context.Context, id, so
 	return nil
 }
 
-func (f *fakeStore) CreateToolboxSuggestion(context.Context, models.ToolboxSuggestion) (models.ToolboxSuggestion, error) {
-	return models.ToolboxSuggestion{}, nil
-}
-func (f *fakeStore) GetToolboxSuggestionById(context.Context, string) (models.ToolboxSuggestion, error) {
-	return models.ToolboxSuggestion{}, nil
-}
-func (f *fakeStore) ListToolboxSuggestions(context.Context, string, string, int64, int64) ([]models.ToolboxSuggestion, int64, error) {
-	return nil, 0, nil
-}
-func (f *fakeStore) UpdateToolboxSuggestionStatus(context.Context, string, string, string) error {
-	return nil
-}
-
-func (f *fakeStore) ListNutritionIngredients(context.Context) ([]models.NutritionIngredient, error) {
+func (f *fakeStore) ListFoods(context.Context) ([]models.FoodItem, error) {
+	if f.listFoodsFn != nil {
+		return f.listFoodsFn()
+	}
 	return nil, nil
 }
-func (f *fakeStore) GetNutritionIngredientById(_ context.Context, id string) (models.NutritionIngredient, error) {
-	if f.getNutritionIngredientByIdFn != nil {
-		return f.getNutritionIngredientByIdFn(id)
+func (f *fakeStore) GetFoodById(_ context.Context, id string) (models.FoodItem, error) {
+	if f.listFoodsFn != nil {
+		foods, _ := f.listFoodsFn()
+		for _, food := range foods {
+			if food.Id == id {
+				return food, nil
+			}
+		}
 	}
-	return models.NutritionIngredient{}, nil
+	return models.FoodItem{}, mongorepo.FoodNotFoundError
 }
 
-func (f *fakeStore) CreateIngredientNutritionLink(_ context.Context, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+func (f *fakeStore) CreateIngredientNutritionLink(_ context.Context, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
 	if f.createIngredientNutritionLinkFn != nil {
-		return f.createIngredientNutritionLinkFn(name, nutritionID, gPer100ml, gramsPerUnit)
+		return f.createIngredientNutritionLinkFn(name, foodID, gPer100ml, gramsPerUnit)
 	}
 	return models.IngredientNutritionLink{}, nil
 }
-func (f *fakeStore) UpdateIngredientNutritionLink(_ context.Context, id, name string, nutritionID primitive.ObjectID, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
+func (f *fakeStore) UpdateIngredientNutritionLink(_ context.Context, id, name, foodID string, gPer100ml, gramsPerUnit *float64) (models.IngredientNutritionLink, error) {
 	if f.updateIngredientNutritionLinkFn != nil {
-		return f.updateIngredientNutritionLinkFn(id, name, nutritionID, gPer100ml, gramsPerUnit)
+		return f.updateIngredientNutritionLinkFn(id, name, foodID, gPer100ml, gramsPerUnit)
 	}
 	return models.IngredientNutritionLink{}, nil
 }
