@@ -2083,3 +2083,62 @@ func TestListUsesPerRecipeFavoritesForVariationOf(t *testing.T) {
 		t.Fatalf("previews = %+v, want one favorited preview with count 1", previews)
 	}
 }
+
+func TestListUsesPerRecipeFavoritesForFlat(t *testing.T) {
+	id := ptrObjectID()
+	store := &fakeStore{
+		getRecipeDocumentsFn: func(models.GetRecipesRequest) ([]models.Recipe, int64, error) {
+			return []models.Recipe{{Id: id}}, 1, nil
+		},
+		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
+			return map[string]models.FavoriteInfo{id.Hex(): {Count: 1, Favorited: true}}, nil
+		},
+		getFamilyFavoriteInfoFn: func([]string, string) (map[string]models.FavoriteInfo, error) {
+			t.Fatal("GetFamilyFavoriteInfo should not be called on the flat listing")
+			return nil, nil
+		},
+	}
+	s := &Service{db: store}
+
+	previews, _, err := s.List(context.Background(), models.GetRecipesRequest{Flat: true}, "user-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(previews) != 1 || !previews[0].Favorite || previews[0].FavoriteCount != 1 {
+		t.Fatalf("previews = %+v, want one favorited preview with count 1", previews)
+	}
+}
+
+func TestListStampsFamilySize(t *testing.T) {
+	root, variation, standalone := ptrObjectID(), ptrObjectID(), ptrObjectID()
+	var calls [][]string
+	store := &fakeStore{
+		getRecipeDocumentsFn: func(models.GetRecipesRequest) ([]models.Recipe, int64, error) {
+			return []models.Recipe{{Id: root}, {Id: variation, VariationOf: root}, {Id: standalone}}, 3, nil
+		},
+		getVariationCountsFn: func(ids []string) (map[string]int64, error) {
+			calls = append(calls, ids)
+			return map[string]int64{root.Hex(): 2}, nil
+		},
+	}
+	s := &Service{db: store}
+
+	previews, _, err := s.List(context.Background(), models.GetRecipesRequest{Flat: true}, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := []int64{previews[0].FamilySize, previews[1].FamilySize, previews[2].FamilySize}
+	if !reflect.DeepEqual(got, []int64{3, 3, 1}) {
+		t.Fatalf("family sizes = %v, want [3 3 1]", got)
+	}
+	for _, ids := range calls {
+		for _, id := range ids {
+			if id == variation.Hex() {
+				t.Fatalf("GetVariationCounts asked for a variation's own id: %v", ids)
+			}
+		}
+		if len(ids) > 2 {
+			t.Fatalf("GetVariationCounts ids not deduplicated: %v", ids)
+		}
+	}
+}

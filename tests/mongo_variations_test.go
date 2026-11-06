@@ -307,3 +307,32 @@ func TestGetRecipeDocumentsOwnRecipesFlatAcrossAllUsers(t *testing.T) {
 	gotIDs := []string{all[0].Id.Hex(), all[1].Id.Hex(), all[2].Id.Hex()}
 	assert.ElementsMatch(t, []string{rootA.Hex(), variationA.Hex(), rootB.Hex()}, gotIDs)
 }
+
+func TestGetRecipeDocumentsFlatListing(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	author := insertTestUser(t, db, ctx, "flat-listing-author")
+	root := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Lasagna", "ingredients": bson.A{bson.M{"name": "pasta"}}, "kind": "dish"})
+	variation := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Veggie Lasagna", "variation_of": root, "tags": bson.A{"vegan"}, "ingredients": bson.A{bson.M{"name": "pasta"}}, "kind": "dish"})
+	diy := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Soap", "category": "diy"})
+
+	// Roots and variations alike, never diy on the food listing.
+	food, count, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, Flat: true})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+	require.Len(t, food, 2)
+	assert.ElementsMatch(t, []string{root.Hex(), variation.Hex()}, []string{food[0].Id.Hex(), food[1].Id.Hex()})
+
+	diyOnly, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, Flat: true, Category: models.Diy})
+	require.NoError(t, err)
+	require.Len(t, diyOnly, 1)
+	assert.Equal(t, diy.Hex(), diyOnly[0].Id.Hex())
+
+	// Tags match each recipe on its own: only the tagged variation, no family hint.
+	vegan, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, Flat: true, Tags: []string{"vegan"}})
+	require.NoError(t, err)
+	require.Len(t, vegan, 1)
+	assert.Equal(t, variation.Hex(), vegan[0].Id.Hex())
+	assert.Empty(t, vegan[0].TagMatches)
+}

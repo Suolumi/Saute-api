@@ -98,6 +98,10 @@ type GetRecipesRequest struct {
 	// and favorite decoration is per-recipe instead of family-aggregate. Set
 	// only by the Settings page's own-recipes fetch.
 	OwnRecipes bool `query:"own_recipes,omitempty"`
+	// Flat lists the public listing uncollapsed: roots and variations alike,
+	// with the default listing's category narrowing. Favorites, popularity
+	// and tags are per recipe, never family-aggregated.
+	Flat bool `query:"flat,omitempty"`
 	// FavoritesOnly switches List into "My Favorites" mode: only recipes the
 	// caller has exactly favorited are returned - flat, not family-collapsed
 	// (the exact variation favorited is what's listed, not its root), sorted
@@ -340,6 +344,9 @@ type RecipePreview struct {
 	Favorite       bool       `bson:"-" json:"favorite"`
 	FavoriteCount  int64      `bson:"-" json:"favorite_count"`
 	VariationCount int64      `bson:"-" json:"variation_count"`
+	// FamilySize counts the preview's whole family (root + variations); 1
+	// for a standalone recipe.
+	FamilySize int64 `bson:"-" json:"family_size"`
 }
 
 // MarshalJSON ensures `pictures` serializes as `[]` rather than `null`; see

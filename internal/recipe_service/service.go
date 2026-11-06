@@ -1120,6 +1120,32 @@ func (s *Service) decorateVariationCountsPreviews(ctx context.Context, previews 
 	}
 }
 
+// decorateFamilySizes stamps FamilySize onto every preview, root or
+// variation, keyed by its family root.
+func (s *Service) decorateFamilySizes(ctx context.Context, previews []models.RecipePreview) {
+	roots := make([]string, 0, len(previews))
+	seen := make(map[string]struct{}, len(previews))
+	for _, preview := range previews {
+		rootHex := familyRootHex(preview.Id, preview.VariationOf)
+		if _, ok := seen[rootHex]; rootHex == "" || ok {
+			continue
+		}
+		seen[rootHex] = struct{}{}
+		roots = append(roots, rootHex)
+	}
+	if len(roots) == 0 {
+		return
+	}
+	counts, err := s.db.GetVariationCounts(ctx, roots)
+	if err != nil {
+		utils.LogError("could not load family sizes", err)
+		return
+	}
+	for i := range previews {
+		previews[i].FamilySize = 1 + counts[familyRootHex(previews[i].Id, previews[i].VariationOf)]
+	}
+}
+
 // decorateVariationCounts is decorateVariationCountsPreviews for a page of
 // full recipes rather than previews.
 func (s *Service) decorateVariationCounts(ctx context.Context, recipes []models.Recipe) {
@@ -1282,7 +1308,7 @@ func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest,
 	}
 
 	previews := s.localizePreviews(ctx, documents, parameters.Locale)
-	if parameters.OwnRecipes || parameters.FavoritesOnly || parameters.VariationOf != "" {
+	if parameters.OwnRecipes || parameters.FavoritesOnly || parameters.Flat || parameters.VariationOf != "" {
 		// "My Recipes"/"My Favorites" (decision #4) and a family's variation
 		// list (VariationOf - used by the recipe detail page's Variations
 		// section and the variation-picker modal): each entry's own exact
@@ -1293,6 +1319,7 @@ func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest,
 		s.decorateFamilyFavoritePreviews(ctx, previews, userID)
 	}
 	s.decorateVariationCountsPreviews(ctx, previews)
+	s.decorateFamilySizes(ctx, previews)
 	return previews, count, nil
 }
 

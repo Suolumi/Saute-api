@@ -262,12 +262,12 @@ func familyTagsAllStages(tags []string) []bson.D {
 
 // isFamilyListingRequest reports whether parameters selects the default,
 // family-collapsed discovery listing (as opposed to variation_of/
-// own_recipes/favorites_only, which are flat). Shared between
+// own_recipes/favorites_only/flat, which are flat). Shared between
 // buildRecipeFilterPipeline and its callers, which need to know whether the
 // pipeline still carries a "variations" array (see recipeCountStage) before
 // buildRecipeFilterPipeline's caller unsets it.
 func isFamilyListingRequest(parameters models.GetRecipesRequest) bool {
-	return parameters.VariationOf == "" && !parameters.OwnRecipes && !parameters.FavoritesOnly
+	return parameters.VariationOf == "" && !parameters.OwnRecipes && !parameters.FavoritesOnly && !parameters.Flat
 }
 
 // buildRecipeFilterPipeline returns the $lookup(author) plus every filter
@@ -342,8 +342,10 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 		}
 	default:
 		// Default public discovery listing: collapse each family to its
-		// root.
-		pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "variation_of", Value: bson.D{{Key: "$exists", Value: false}}}}}})
+		// root, unless Flat asks for every recipe.
+		if !parameters.Flat {
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "variation_of", Value: bson.D{{Key: "$exists", Value: false}}}}}})
+		}
 		if parameters.Category == models.Diy {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: models.Diy}}}})
 		} else {
@@ -527,7 +529,7 @@ func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 	}
 
 	sortKey := "_id"
-	if parameters.VariationOf == "" && !parameters.OwnRecipes {
+	if isFamilyListingRequest(parameters) {
 		sortKey = "family_sort_id"
 	}
 
