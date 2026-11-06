@@ -114,3 +114,30 @@ func TestRecipeTagStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "vegan", updated.Icon)
 }
+
+// TestSeedTagIconsFillsOnlyBlankIcons covers the startup step giving the
+// original tags their icon: a blank icon is filled, an admin's pick stays.
+func TestSeedTagIconsFillsOnlyBlankIcons(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	for _, tag := range []models.RecipeTag{
+		{Slug: "vegan", Group: models.TagGroupDiet, Categories: []models.RecipeCategory{models.Food}, Implies: []string{}, Labels: map[string]string{"en": "Vegan"}, SourceLocale: "en"},
+		{Slug: "one-pot", Group: models.TagGroupPractical, Categories: []models.RecipeCategory{models.Food}, Implies: []string{}, Labels: map[string]string{"en": "One-pot"}, SourceLocale: "en", Icon: "soup"},
+		{Slug: "custom", Group: models.TagGroupPractical, Categories: []models.RecipeCategory{models.Food}, Implies: []string{}, Labels: map[string]string{"en": "Custom"}, SourceLocale: "en"},
+	} {
+		require.NoError(t, db.CreateRecipeTag(ctx, tag))
+	}
+
+	require.NoError(t, db.SeedTagIcons(ctx))
+	require.NoError(t, db.SeedTagIcons(ctx))
+
+	vegan, err := db.GetRecipeTag(ctx, "vegan")
+	require.NoError(t, err)
+	assert.Equal(t, "vegan", vegan.Icon)
+	onePot, err := db.GetRecipeTag(ctx, "one-pot")
+	require.NoError(t, err)
+	assert.Equal(t, "soup", onePot.Icon, "an admin's icon is never overwritten")
+	custom, err := db.GetRecipeTag(ctx, "custom")
+	require.NoError(t, err)
+	assert.Empty(t, custom.Icon, "a tag with no default icon is left alone")
+}

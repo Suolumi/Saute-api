@@ -118,3 +118,38 @@ func (c *Client) FillRecipeTagLabel(ctx context.Context, slug, sourceLocale, sou
 		bson.D{{Key: "$set", Value: bson.D{{Key: "labels." + locale, Value: label}}}})
 	return err
 }
+
+// SeedTagIcons gives each of the original tags its default icon while its
+// icon is blank. It never overwrites an icon, so admin picks stay.
+func (c *Client) SeedTagIcons(ctx context.Context) error {
+	for slug, icon := range defaultTagIcons {
+		filter := bson.D{{Key: "_id", Value: slug}, {Key: "$or", Value: bson.A{
+			bson.D{{Key: "icon", Value: bson.D{{Key: "$exists", Value: false}}}},
+			bson.D{{Key: "icon", Value: ""}},
+		}}}
+		if _, err := c.db.Collection(recipeTagsCollection).UpdateOne(ctx, filter, bson.D{{Key: "$set", Value: bson.D{{Key: "icon", Value: icon}}}}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// defaultTagIcons maps the tags created before icons existed to a name from
+// the site's tagIcons list.
+var defaultTagIcons = map[string]string{
+	"gluten-free-option": "wheat-off",
+	"high-protein":       "dumbbell",
+	"pescatarian":        "fish",
+	"vegan":              "vegan",
+	"vegetarian":         "carrot",
+	"batch-cooking":      "meal-prep",
+	"budget-friendly":    "piggy-bank",
+	"freezer-friendly":   "snowflake",
+	"leftovers":          "leftovers",
+	"make-ahead":         "calendar-clock",
+	"microwave":          "microwave",
+	"no-cook":            "flame-off",
+	"no-oven":            "oven-off",
+	"one-pot":            "cooking-pot",
+	"slow-cooking":       "slow-cooker",
+}

@@ -107,6 +107,7 @@ type Database interface {
 	UpdateNutritionSuggestionStatus(ctx context.Context, id, status, reviewedBy string) error
 	SeedNutritionDefaults(ctx context.Context) error
 	MigrateFoods(ctx context.Context) error
+	SeedTagIcons(ctx context.Context) error
 
 	ListRecipeTags(ctx context.Context) ([]models.RecipeTag, error)
 	GetRecipeTag(ctx context.Context, slug string) (models.RecipeTag, error)
