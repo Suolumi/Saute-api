@@ -48,7 +48,12 @@ type Database interface {
 	RecipeCountsByCategory(ctx context.Context) (map[string]int64, error)
 	RepointRecipeReferences(ctx context.Context, oldRootID, newRootID string) error
 	HasIncomingReferences(ctx context.Context, recipeID string) (bool, error)
-	FamilyReferencesRecipe(ctx context.Context, familyRootID, targetID string) (bool, error)
+	FamilyReferencesRecipe(ctx context.Context, familyID, targetID string) (bool, error)
+	RecipeReferencesFamily(ctx context.Context, recipeID, familyID string) (bool, error)
+	GetFamilySizes(ctx context.Context, familyIDs []string) (map[string]int64, error)
+	GetNewestFamilyMemberID(ctx context.Context, familyID, excludeID string) (*primitive.ObjectID, error)
+	SetFamilyID(ctx context.Context, recipeID, familyID string) error
+	RekeyFamily(ctx context.Context, familyID, excludeID, newFamilyID string) error
 	GetRecipeTitles(ctx context.Context, ids []string) (map[string]string, error)
 	GetUsersByIDs(ctx context.Context, ids []string) (map[string]models.UserView, error)
 
@@ -56,7 +61,7 @@ type Database interface {
 	RemoveFavorite(ctx context.Context, userID, recipeID string) error
 	DeleteFavoritesByRecipeID(ctx context.Context, recipeID string) error
 	GetFavoriteInfo(ctx context.Context, ids []string, userID string) (map[string]models.FavoriteInfo, error)
-	GetFamilyFavoriteInfo(ctx context.Context, rootIDs []string, userID string) (map[string]models.FavoriteInfo, error)
+	GetFamilyFavoriteInfo(ctx context.Context, familyIDs []string, userID string) (map[string]models.FavoriteInfo, error)
 	GetRecipeFavoriters(ctx context.Context, recipeID string, limit, offset int64) ([]models.UserView, int64, error)
 
 	CreateTranslationSuggestion(ctx context.Context, suggestion models.TranslationSuggestion) (models.TranslationSuggestion, error)

@@ -215,14 +215,14 @@ func (c *Client) GetRecipeFavoriters(ctx context.Context, recipeID string, limit
 }
 
 // GetFamilyFavoriteInfo is the family-aware counterpart to GetFavoriteInfo:
-// for each given root id, it returns the number of distinct people who
-// favorited that root or any of its variations (not a raw sum - the same
-// person favoriting two versions of the same dish counts once, decision #6),
-// and whether userID is one of them.
-func (c *Client) GetFamilyFavoriteInfo(ctx context.Context, rootIDs []string, userID string) (map[string]models.FavoriteInfo, error) {
-	result := make(map[string]models.FavoriteInfo, len(rootIDs))
-	objectIDs := make([]primitive.ObjectID, 0, len(rootIDs))
-	for _, id := range rootIDs {
+// for each given family id, it returns the number of distinct people who
+// favorited any member of that family (not a raw sum - the same person
+// favoriting two versions of the same dish counts once, decision #6), and
+// whether userID is one of them.
+func (c *Client) GetFamilyFavoriteInfo(ctx context.Context, familyIDs []string, userID string) (map[string]models.FavoriteInfo, error) {
+	result := make(map[string]models.FavoriteInfo, len(familyIDs))
+	objectIDs := make([]primitive.ObjectID, 0, len(familyIDs))
+	for _, id := range familyIDs {
 		objectID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
 			return nil, err
@@ -242,16 +242,14 @@ func (c *Client) GetFamilyFavoriteInfo(ctx context.Context, rootIDs []string, us
 	}
 
 	cursor, err := c.db.Collection(recipesCollection).Aggregate(ctx, bson.A{
-		bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: bson.D{{Key: "$in", Value: objectIDs}}}}}},
-		variationsLookupStage,
-		bson.D{{Key: "$addFields", Value: bson.D{
-			{Key: "family_ids", Value: bson.D{{Key: "$concatArrays", Value: bson.A{
-				bson.A{"$_id"}, "$variations._id",
-			}}}},
+		bson.D{{Key: "$match", Value: bson.D{{Key: "family_id", Value: bson.D{{Key: "$in", Value: objectIDs}}}}}},
+		bson.D{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$family_id"},
+			{Key: "member_ids", Value: bson.D{{Key: "$push", Value: "$_id"}}},
 		}}},
 		bson.D{{Key: "$lookup", Value: bson.D{
 			{Key: "from", Value: favoritesCollection},
-			{Key: "localField", Value: "family_ids"},
+			{Key: "localField", Value: "member_ids"},
 			{Key: "foreignField", Value: "recipe"},
 			{Key: "as", Value: "family_favorites"},
 		}}},

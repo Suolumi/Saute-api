@@ -1117,32 +1117,6 @@ func (c *Client) HasIncomingReferences(ctx context.Context, recipeID string) (bo
 	return count > 0, nil
 }
 
-// FamilyReferencesRecipe reports whether any recipe in familyRootID's family
-// (the root itself or any of its variations) has an ingredient referencing
-// targetID - the family-scoped counterpart of HasIncomingReferences, powering
-// LinkVariation's self-reference-loop check.
-func (c *Client) FamilyReferencesRecipe(ctx context.Context, familyRootID, targetID string) (bool, error) {
-	rootObjectID, err := primitive.ObjectIDFromHex(familyRootID)
-	if err != nil {
-		return false, err
-	}
-	targetObjectID, err := primitive.ObjectIDFromHex(targetID)
-	if err != nil {
-		return false, err
-	}
-	count, err := c.db.Collection(recipesCollection).CountDocuments(ctx,
-		bson.M{
-			"$or":                    bson.A{bson.M{"_id": rootObjectID}, bson.M{"variation_of": rootObjectID}},
-			"ingredients.recipe_ref": targetObjectID,
-		},
-		options.Count().SetLimit(1),
-	)
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
 // GetRecipeTitles returns each id's current title, for cheaply resolving a
 // reference ingredient's display title in bulk (one query regardless of how
 // many recipes/ingredients reference the same or different targets). An id

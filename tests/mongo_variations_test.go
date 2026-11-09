@@ -198,23 +198,24 @@ func TestGetFamilyFavoriteInfoCountsDistinctPeopleAcrossVariations(t *testing.T)
 	userB := insertTestUser(t, db, ctx, "family-fav-b")
 	userC := insertTestUser(t, db, ctx, "family-fav-c")
 
-	root := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Root", "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})
-	variation := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Variation", "variation_of": root, "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})
+	family := primitive.NewObjectID()
+	root := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Root", "family_id": family, "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})
+	variation := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Variation", "family_id": family, "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})
 
 	require.NoError(t, db.AddFavorite(ctx, userA.Hex(), root.Hex()))
 	require.NoError(t, db.AddFavorite(ctx, userA.Hex(), variation.Hex())) // same person, both versions
 	require.NoError(t, db.AddFavorite(ctx, userB.Hex(), variation.Hex()))
 
-	infoForA, err := db.GetFamilyFavoriteInfo(ctx, []string{root.Hex()}, userA.Hex())
+	infoForA, err := db.GetFamilyFavoriteInfo(ctx, []string{family.Hex()}, userA.Hex())
 	require.NoError(t, err)
-	require.Contains(t, infoForA, root.Hex())
-	assert.Equal(t, int64(2), infoForA[root.Hex()].Count, "userA favoriting both versions must still count once")
-	assert.True(t, infoForA[root.Hex()].Favorited)
+	require.Contains(t, infoForA, family.Hex())
+	assert.Equal(t, int64(2), infoForA[family.Hex()].Count, "userA favoriting both versions must still count once")
+	assert.True(t, infoForA[family.Hex()].Favorited)
 
-	infoForC, err := db.GetFamilyFavoriteInfo(ctx, []string{root.Hex()}, userC.Hex())
+	infoForC, err := db.GetFamilyFavoriteInfo(ctx, []string{family.Hex()}, userC.Hex())
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), infoForC[root.Hex()].Count)
-	assert.False(t, infoForC[root.Hex()].Favorited)
+	assert.Equal(t, int64(2), infoForC[family.Hex()].Count)
+	assert.False(t, infoForC[family.Hex()].Favorited)
 }
 
 func TestGetRecipeDocumentsBoostedTreatsVariationFavoriteAsFamilyFavorite(t *testing.T) {
