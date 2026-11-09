@@ -87,7 +87,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 	},
 	{
 		ID: "recipes.linkVariation", Method: "PATCH", Path: "/recipes/:id/variation-of", Category: "recipes",
-		Label: "Link recipe as variation", Description: "Join an existing standalone recipe to the family of another recipe.",
+		Label: "Link recipe as version", Description: "Join an existing standalone recipe to the family of another recipe.",
 		Params: []models.AdminRouteParam{
 			{Name: "id", In: "path", Type: "string", Picker: "recipe", Required: true, Label: "Recipe to link"},
 			{Name: "variation_of", In: "body", Type: "string", Picker: "recipe", Required: true, Label: "Any version in the target family"},
@@ -103,7 +103,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 	},
 	{
 		ID: "admin.recipes.list", Method: "GET", Path: "/admin/recipes", Category: "recipes",
-		Label: "List recipes (flat)", Description: "Browse every recipe and variation across all users, ungrouped.",
+		Label: "List recipes (flat)", Description: "Browse every recipe version across all users, ungrouped.",
 		Params: []models.AdminRouteParam{
 			{Name: "title", In: "query", Type: "string", Label: "Title contains"},
 			{Name: "author", In: "query", Type: "string", Label: "Author username"},

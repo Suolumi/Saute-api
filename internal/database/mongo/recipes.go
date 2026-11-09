@@ -868,8 +868,8 @@ func (c *Client) HasIncomingReferences(ctx context.Context, recipeID string) (bo
 // GetRecipeTitles returns each id's current title, for cheaply resolving a
 // reference ingredient's display title in bulk (one query regardless of how
 // many recipes/ingredients reference the same or different targets). An id
-// with no matching document (a dangling reference - shouldn't happen given
-// write-time validation, tolerated defensively) is simply absent from the
+// with no matching document (a dangling reference, e.g. a recipe deleted
+// meanwhile, tolerated defensively) is simply absent from the
 // result.
 func (c *Client) GetRecipeTitles(ctx context.Context, ids []string) (map[string]string, error) {
 	result := make(map[string]string, len(ids))

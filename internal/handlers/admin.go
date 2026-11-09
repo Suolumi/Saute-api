@@ -153,7 +153,7 @@ func (h *Handlers) AdminRevokeMcpToken(c echo.Context) error {
 	return messageResponse(http.StatusOK, "MCP token revoked", c)
 }
 
-// AdminListRecipes is the moderation browse view: every recipe and variation
+// AdminListRecipes is the moderation browse view: every recipe version
 // across every user, individually - never family-collapsed. Reuses the
 // existing List/GetRecipesRequest machinery with OwnRecipes forced true,
 // which already produces exactly this flat shape (see
@@ -222,7 +222,7 @@ func (h *Handlers) AdminGetRecipeFavorites(c echo.Context) error {
 }
 
 // AdminDetachRecipeVariation removes a recipe from its family, turning it
-// back into a standalone root (recipe_service.DetachVariation). Admin only -
+// back into a standalone recipe (recipe_service.DetachVariation). Admin only -
 // unlike LinkRecipeVariation, there is no self-service counterpart and no
 // MCP tool for this: it's a moderation action, and it's irreversible from
 // the app's own UI once done.

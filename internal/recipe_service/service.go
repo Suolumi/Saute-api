@@ -925,8 +925,8 @@ func (s *Service) Get(ctx context.Context, recipeID, locale, userID string) (mod
 	// A detail page shows the exact recipe being viewed, so its favorite
 	// status/count reflect only that recipe, not the whole family (unlike
 	// the family-collapsed discovery listing, which still aggregates by
-	// family - see List) - a user favoriting one variation shouldn't make
-	// every other member of the family look favorited when viewed directly.
+	// family - see List) - a user favoriting one version shouldn't make
+	// every other version of the family look favorited when viewed directly.
 	s.decorateFavorite(ctx, &localized, userID)
 	s.decorateFamilySize(ctx, &localized)
 	s.decorateRefTitle(ctx, &localized)

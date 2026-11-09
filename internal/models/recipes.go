@@ -94,17 +94,17 @@ type GetRecipesRequest struct {
 	// instead of the default family-collapsed listing.
 	Family string `query:"family,omitempty"`
 	// OwnRecipes switches List into "My Recipes" mode: every recipe matching
-	// Author is returned flatly (roots and variations alike, no collapsing),
+	// Author is returned flatly (every version, no collapsing),
 	// and favorite decoration is per-recipe instead of family-aggregate. Set
 	// only by the Settings page's own-recipes fetch.
 	OwnRecipes bool `query:"own_recipes,omitempty"`
-	// Flat lists the public listing uncollapsed: roots and variations alike,
+	// Flat lists the public listing uncollapsed: every version,
 	// with the default listing's category narrowing. Favorites, popularity
 	// and tags are per recipe, never family-aggregated.
 	Flat bool `query:"flat,omitempty"`
 	// FavoritesOnly switches List into "My Favorites" mode: only recipes the
 	// caller has exactly favorited are returned - flat, not family-collapsed
-	// (the exact variation favorited is what's listed, not its root), sorted
+	// (the exact version favorited is what's listed, not another in its family), sorted
 	// alphabetically by default rather than newest-first. Unlike Favorite's
 	// boost-to-front behavior, this excludes everything else instead of just
 	// reordering. Unlike OwnRecipes' category-agnostic default, Category here
