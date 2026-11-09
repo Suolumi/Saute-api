@@ -131,6 +131,7 @@ type Store interface {
 	DeleteLocalizedRecipesByID(ctx context.Context, id string) error
 	GetFamilySizes(ctx context.Context, familyIDs []string) (map[string]int64, error)
 	GetNewestFamilyMemberID(ctx context.Context, familyID, excludeID string) (*primitive.ObjectID, error)
+	GetNewestFamilyMemberNotReferencing(ctx context.Context, familyID, recipeID string) (*primitive.ObjectID, error)
 	SetFamilyID(ctx context.Context, recipeID, familyID string) error
 	RekeyFamily(ctx context.Context, familyID, excludeID, newFamilyID string) error
 	RepointRecipeReferences(ctx context.Context, oldRootID, newRootID string) error
@@ -1413,7 +1414,8 @@ func (s *Service) Delete(ctx context.Context, recipeID string) (models.RecipeDB,
 		return models.RecipeDB{}, err
 	}
 	if referenced {
-		// Refs move to the newest remaining version so they keep pointing
+		// Refs move to the newest remaining version that doesn't itself ref
+		// this one (it would end up referencing itself) so they keep pointing
 		// into the same family; with none left they'd dangle, so block.
 		recipe, err := s.db.GetRecipeById(recipeID)
 		if err != nil {
@@ -1424,7 +1426,7 @@ func (s *Service) Delete(ctx context.Context, recipeID string) (models.RecipeDB,
 		}
 		var newest *primitive.ObjectID
 		if recipe.FamilyID != nil {
-			newest, err = s.db.GetNewestFamilyMemberID(ctx, recipe.FamilyID.Hex(), recipeID)
+			newest, err = s.db.GetNewestFamilyMemberNotReferencing(ctx, recipe.FamilyID.Hex(), recipeID)
 			if err != nil {
 				return models.RecipeDB{}, err
 			}

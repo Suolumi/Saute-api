@@ -53,8 +53,11 @@ type fakeStore struct {
 
 	// families maps recipe id -> family id for the family methods;
 	// familyOrder lists those recipe ids oldest first (see addFamily).
-	families        map[string]string
-	familyOrder     []string
+	families    map[string]string
+	familyOrder []string
+	// referrers lists recipe ids whose ingredients reference the recipe being
+	// deleted (see GetNewestFamilyMemberNotReferencing).
+	referrers       map[string]bool
 	familySizeCalls [][]string
 
 	listToolboxUnitsFn                      func() ([]models.ToolboxUnit, error)
@@ -176,6 +179,16 @@ func (f *fakeStore) GetNewestFamilyMemberID(_ context.Context, familyID, exclude
 	for i := len(f.familyOrder) - 1; i >= 0; i-- {
 		id := f.familyOrder[i]
 		if id != excludeID && f.families[id] == familyID {
+			objectID, err := primitive.ObjectIDFromHex(id)
+			return &objectID, err
+		}
+	}
+	return nil, nil
+}
+func (f *fakeStore) GetNewestFamilyMemberNotReferencing(_ context.Context, familyID, recipeID string) (*primitive.ObjectID, error) {
+	for i := len(f.familyOrder) - 1; i >= 0; i-- {
+		id := f.familyOrder[i]
+		if id != recipeID && f.families[id] == familyID && !f.referrers[id] {
 			objectID, err := primitive.ObjectIDFromHex(id)
 			return &objectID, err
 		}
@@ -1403,6 +1416,48 @@ func TestDeleteRepointsRefsToNewestRemaining(t *testing.T) {
 	want := []string{"RepointRecipeReferences", "DeleteRecipeById"}
 	if !reflect.DeepEqual(store.callOrder, want) {
 		t.Fatalf("callOrder = %v, want %v", store.callOrder, want)
+	}
+}
+
+func TestDeleteWhenNewestSiblingRefsTheDeleted(t *testing.T) {
+	store := &fakeStore{}
+	noFavorites(store)
+	a, b, c := familyOfThree(store)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c)
+	store.referrers = map[string]bool{c.Id.Hex(): true}
+	store.hasIncomingReferencesFn = func(id string) (bool, error) { return id == b.Id.Hex(), nil }
+	store.repointRecipeReferencesFn = func(oldID, newID string) error {
+		if oldID != b.Id.Hex() || newID != a.Id.Hex() {
+			t.Fatalf("RepointRecipeReferences(%s, %s), want (%s, %s)", oldID, newID, b.Id.Hex(), a.Id.Hex())
+		}
+		return nil
+	}
+	s := &Service{db: store}
+
+	if _, err := s.Delete(context.Background(), b.Id.Hex()); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if store.repointRecipeReferences != 1 {
+		t.Fatalf("repoint calls = %d, want 1", store.repointRecipeReferences)
+	}
+}
+
+func TestDeleteNewestMemberRepointsToNextNewest(t *testing.T) {
+	store := &fakeStore{}
+	noFavorites(store)
+	a, b, c := familyOfThree(store)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c)
+	store.hasIncomingReferencesFn = func(id string) (bool, error) { return id == c.Id.Hex(), nil }
+	store.repointRecipeReferencesFn = func(oldID, newID string) error {
+		if oldID != c.Id.Hex() || newID != b.Id.Hex() {
+			t.Fatalf("RepointRecipeReferences(%s, %s), want (%s, %s)", oldID, newID, c.Id.Hex(), b.Id.Hex())
+		}
+		return nil
+	}
+	s := &Service{db: store}
+
+	if _, err := s.Delete(context.Background(), c.Id.Hex()); err != nil {
+		t.Fatalf("Delete: %v", err)
 	}
 }
 

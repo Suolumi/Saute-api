@@ -47,6 +47,7 @@ type Database interface {
 	RecipeReferencesFamily(ctx context.Context, recipeID, familyID string) (bool, error)
 	GetFamilySizes(ctx context.Context, familyIDs []string) (map[string]int64, error)
 	GetNewestFamilyMemberID(ctx context.Context, familyID, excludeID string) (*primitive.ObjectID, error)
+	GetNewestFamilyMemberNotReferencing(ctx context.Context, familyID, recipeID string) (*primitive.ObjectID, error)
 	SetFamilyID(ctx context.Context, recipeID, familyID string) error
 	RekeyFamily(ctx context.Context, familyID, excludeID, newFamilyID string) error
 	GetRecipeTitles(ctx context.Context, ids []string) (map[string]string, error)

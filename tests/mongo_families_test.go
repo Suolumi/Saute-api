@@ -150,6 +150,36 @@ func TestGetNewestFamilyMemberID(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestGetNewestFamilyMemberNotReferencing(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	author := insertTestUser(t, db, ctx, "notref")
+	f := primitive.NewObjectID()
+	mk := func(title string, ings ...models.Ingredient) models.Recipe {
+		r, err := db.CreateRecipe(author.Hex(), &models.CreateRecipe{Title: title, Kind: "dish", Ingredients: ings, FamilyID: &f})
+		require.NoError(t, err)
+		return r
+	}
+	a := mk("A", models.Ingredient{Name: "flour"})
+	b := mk("B", models.Ingredient{Name: "flour"})
+	c := mk("C", models.Ingredient{Name: "b", RecipeRef: b.Id})
+
+	got, err := db.GetNewestFamilyMemberNotReferencing(ctx, f.Hex(), b.Id.Hex())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, *a.Id, *got)
+
+	got, err = db.GetNewestFamilyMemberNotReferencing(ctx, f.Hex(), c.Id.Hex())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, *b.Id, *got)
+
+	got, err = db.GetNewestFamilyMemberNotReferencing(ctx, f.Hex(), a.Id.Hex())
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, *c.Id, *got)
+}
+
 func TestSetFamilyID(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

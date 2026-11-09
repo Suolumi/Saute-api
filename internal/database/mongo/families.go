@@ -114,6 +114,33 @@ func (c *Client) GetNewestFamilyMemberID(ctx context.Context, familyID, excludeI
 	return &doc.ID, nil
 }
 
+// GetNewestFamilyMemberNotReferencing returns the newest member of familyID
+// other than recipeID whose ingredients do not reference recipeID, or nil when
+// there is none. It is the repoint target for a delete: a member that refs
+// recipeID would end up referencing itself.
+func (c *Client) GetNewestFamilyMemberNotReferencing(ctx context.Context, familyID, recipeID string) (*primitive.ObjectID, error) {
+	ids, err := objectIDs([]string{familyID, recipeID})
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+	err = c.db.Collection(recipesCollection).FindOne(ctx, bson.M{
+		"family_id":              ids[0],
+		"_id":                    bson.M{"$ne": ids[1]},
+		"ingredients.recipe_ref": bson.M{"$ne": ids[1]},
+	}, options.FindOne().SetSort(bson.D{{Key: "_id", Value: -1}}).SetProjection(bson.M{"_id": 1}),
+	).Decode(&doc)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &doc.ID, nil
+}
+
 // SetFamilyID moves one recipe into familyID.
 func (c *Client) SetFamilyID(ctx context.Context, recipeID, familyID string) error {
 	ids, err := objectIDs([]string{recipeID, familyID})
