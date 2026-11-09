@@ -72,9 +72,9 @@ type GetRecipesRequest struct {
 	Popular     bool       `query:"popular,omitempty"`
 	Ingredients []string   `query:"ingredients,omitempty"`
 	Kind        RecipeKind `query:"kind,omitempty"`
-	// Tags keeps only recipes carrying every listed tag slug. On the
-	// family-collapsed listing a family matches when its root or any single
-	// variation carries all of them; see buildRecipeFilterPipeline.
+	// Tags keeps only recipes carrying every listed tag slug. The filter
+	// applies per recipe; on the family-collapsed listing each family shows
+	// its newest matching version. See buildRecipeFilterPipeline.
 	Tags []string `query:"tags,omitempty"`
 	// Category, when "diy", lists only DIY recipes on the default/family-
 	// collapsed listing; when empty or "food", that listing excludes diy
@@ -130,7 +130,7 @@ type GetRecipesResponse struct {
 }
 
 // LinkVariationRequest is PATCH /recipes/:id/variation-of's body: the id of
-// the (root) recipe to link the path recipe as a variation of. See
+// any version of the family to join the path recipe to. See
 // recipe_service.LinkVariation.
 type LinkVariationRequest struct {
 	VariationOf string `json:"variation_of"`
@@ -200,15 +200,9 @@ type CreateRecipe struct {
 	Pictures        []RecipePicture `bson:"pictures,omitempty" json:"-"`
 	SourceLocale    string          `bson:"source_locale,omitempty" json:"locale,omitempty"`
 	SourceHash      string          `bson:"source_hash,omitempty" json:"-"`
-	// VariationOf, on the way in, is the id of the recipe being forked; the
-	// service resolves it to that recipe's root (flattening a
-	// variation-of-a-variation) before it's ever persisted. Must stay the
-	// same *primitive.ObjectID type as RecipeDB.VariationOf: Create() passes
-	// values through utils.DupStruct in both directions between these two
-	// structs (service.go, mongo/recipes.go), which copies same-named fields
-	// with a raw reflect.Value.Set that panics on a type mismatch. A plain
-	// hex string unmarshals into this directly, same as any other id field.
-	VariationOf *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
+	// VariationOf, on the way in, is the id of any version of the family to
+	// join; the service resolves it to that family's id. Never persisted.
+	VariationOf *primitive.ObjectID `bson:"-" json:"variation_of,omitempty"`
 	// FamilyID is set by the service, never by clients. Same type as
 	// RecipeDB.FamilyID for DupStruct.
 	FamilyID *primitive.ObjectID `bson:"family_id,omitempty" json:"-"`
@@ -232,9 +226,6 @@ type RecipeDB struct {
 	SourceLocale    string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
 	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	SourceHash      string              `bson:"source_hash,omitempty" json:"-"`
-	// VariationOf is nil for a root/original recipe, or the root recipe's id
-	// for a variation - always flattened, never chained.
-	VariationOf *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
 	// FamilyID is shared by every version of a recipe; a standalone recipe
 	// is its own family.
 	FamilyID *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
@@ -263,7 +254,6 @@ type Recipe struct {
 	SourceLocale string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
 	Locale       string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	SourceHash   string              `bson:"source_hash,omitempty" json:"-"`
-	VariationOf  *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
 	FamilyID     *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
 	// Favorite, FavoriteCount, FamilySize and PictureOutputs are stamped on
 	// after fetch (see recipe_service.decorateFavorite/decorateFamilySize/
@@ -271,7 +261,6 @@ type Recipe struct {
 	// translation document itself, hence bson:"-".
 	Favorite       bool            `bson:"-" json:"favorite"`
 	FavoriteCount  int64           `bson:"-" json:"favorite_count"`
-	VariationCount int64           `bson:"-" json:"variation_count"`
 	FamilySize     int64           `bson:"-" json:"family_size"`
 	PictureOutputs []PictureOutput `bson:"-" json:"pictures"`
 }
@@ -322,7 +311,6 @@ func (r *Recipe) ToRecipeDB() RecipeDB {
 		SourceLocale:    r.SourceLocale,
 		Locale:          r.Locale,
 		SourceHash:      r.SourceHash,
-		VariationOf:     r.VariationOf,
 		FamilyID:        r.FamilyID,
 	}
 }
@@ -342,11 +330,9 @@ type RecipePreview struct {
 	Tags            []string            `bson:"tags,omitempty" json:"tags"`
 	SourceLocale    string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
 	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
-	VariationOf     *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
 	FamilyID        *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
 	Favorite        bool                `bson:"-" json:"favorite"`
 	FavoriteCount   int64               `bson:"-" json:"favorite_count"`
-	VariationCount  int64               `bson:"-" json:"variation_count"`
 	// FamilySize counts every version in the preview's family; 1 for a
 	// standalone recipe.
 	FamilySize int64 `bson:"-" json:"family_size"`

@@ -347,7 +347,6 @@ func sourceHash(recipe models.RecipeDB) string {
 	recipe.Author = nil
 	recipe.Locale = ""
 	recipe.SourceHash = ""
-	recipe.VariationOf = nil
 	recipe.FamilyID = nil
 	// Tags aren't translated either, and an implication backfill rewrites
 	// them directly in the DB without recomputing this hash.

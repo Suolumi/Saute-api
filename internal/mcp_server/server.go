@@ -36,19 +36,19 @@ type GetInput struct {
 
 // SearchInput drives search_recipes, which - unlike every other tool here -
 // looks across every user's recipes, not just the caller's own. Results are
-// grouped by recipe family (one entry per root, with variation_count) unless
-// VariationOf is set, which instead lists that one family's individual
-// variations.
+// grouped by recipe family (one entry per family, its newest version matching
+// the filters) unless FamilyID is set, which instead lists that one family's
+// versions.
 type SearchInput struct {
-	Title           string                `json:"title,omitempty" jsonschema:"Case-insensitive title search, also matching against each candidate's own variations so a match surfaces its family root"`
+	Title           string                `json:"title,omitempty" jsonschema:"Case-insensitive title search"`
 	Kind            models.RecipeKind     `json:"kind,omitempty" jsonschema:"One of breakfast, starter, dish, side-dish, sauce, baking, snack, plate, dessert, or drink"`
 	Category        models.RecipeCategory `json:"category,omitempty" jsonschema:"One of food or diy; omitted or food excludes diy, diy lists only diy"`
 	Author          string                `json:"author,omitempty" jsonschema:"Case-insensitive username search"`
-	Ingredients     []string              `json:"ingredients,omitempty" jsonschema:"Every listed ingredient name must be present, also matching across a family's variations"`
-	Tags            []string              `json:"tags,omitempty" jsonschema:"Tag slugs from list_tags; a family matches when its root or one single variation carries every listed tag"`
+	Ingredients     []string              `json:"ingredients,omitempty" jsonschema:"Every listed ingredient name must be present"`
+	Tags            []string              `json:"tags,omitempty" jsonschema:"Tag slugs from list_tags; a recipe matches when it carries every listed tag"`
 	PreparationTime int                   `json:"preparation_time,omitempty" jsonschema:"Target preparation time in minutes; results are sorted by closeness to it instead of newest-first"`
 	TotalTime       int                   `json:"total_time,omitempty" jsonschema:"Target total time (preparation + cooking + resting) in minutes; results are sorted by closeness to it instead of newest-first"`
-	VariationOf     string                `json:"variation_of,omitempty" jsonschema:"List only this recipe's family's variations (never the root itself) instead of the default family-collapsed listing"`
+	FamilyID        string                `json:"family_id,omitempty" jsonschema:"List every version of this family (a family_id as returned in a recipe's family_id), newest first, instead of the default one-entry-per-family listing"`
 	Cursor          string                `json:"cursor,omitempty" jsonschema:"Opaque cursor returned by a previous call"`
 	Limit           int                   `json:"limit,omitempty" jsonschema:"Page size from 1 to 100; defaults to 20"`
 	Locale          string                `json:"locale,omitempty" jsonschema:"Requested BCP 47 locale; canonical recipe is returned if translation fails"`
@@ -56,7 +56,7 @@ type SearchInput struct {
 
 // IngredientInput is what create_recipe/update_recipe accept: no recipe_ref
 // field exists here, so a client cannot set a recipe reference through MCP
-// in v1 - search_recipes exists to discover a fork target for
+// in v1 - search_recipes exists to discover a family to join with
 // create_recipe's variation_of, but there is still no way to discover a
 // recipe id to use as an ingredient reference.
 type IngredientInput struct {
@@ -87,16 +87,16 @@ type CreateInput struct {
 	Steps           []models.Step         `json:"steps"`
 	Tags            []string              `json:"tags,omitempty" jsonschema:"Tag slugs from list_tags; implied tags (e.g. vegetarian for vegan) are added automatically"`
 	Locale          string                `json:"locale,omitempty" jsonschema:"BCP 47 locale of the canonical recipe; detected when omitted"`
-	VariationOf     string                `json:"variation_of,omitempty" jsonschema:"Id of another recipe - any recipe, not just one the caller owns - to submit this as a variation of instead of a new root recipe. Resolved and flattened to that recipe's family root server-side. category must match the root's category. Use search_recipes to find a fork target's id."`
+	VariationOf     string                `json:"variation_of,omitempty" jsonschema:"Id of any version in the family to join - any recipe, not just one the caller owns - so this is created as another version of that family instead of a standalone recipe. category must match the family's category. Use search_recipes to find an id."`
 }
 
 // LinkVariationInput drives link_recipe_variation. RecipeID must be one of
 // the caller's own recipes (like every tool but search_recipes); VariationOf
-// may be any recipe's id, any author - found via search_recipes, same as
+// may be the id of any version, any author - found via search_recipes, same as
 // create_recipe's variation_of.
 type LinkVariationInput struct {
 	RecipeID    string `json:"recipe_id" jsonschema:"Id of the caller's own standalone recipe to link"`
-	VariationOf string `json:"variation_of" jsonschema:"Id of the recipe (any author, found via search_recipes) to link as a variation of; must be a root, not itself a variation"`
+	VariationOf string `json:"variation_of" jsonschema:"Id of any version (any author, found via search_recipes) whose family to join"`
 }
 
 type UpdateInput struct {
@@ -191,12 +191,10 @@ type RecipeOutput struct {
 	Pictures        []PictureOutput       `json:"pictures"`
 	SourceLocale    string                `json:"source_locale,omitempty"`
 	Locale          string                `json:"locale,omitempty"`
-	// VariationOf is the id of the recipe this one is a variation of, empty
-	// for a root recipe. VariationCount is how many variations a root has
-	// (always 0 for a variation - it describes the root's family size, not
-	// "siblings of this variation").
-	VariationOf    string `json:"variation_of,omitempty"`
-	VariationCount int64  `json:"variation_count"`
+	// FamilyID is shared by every version of a recipe; FamilySize counts them
+	// (1 for a standalone recipe).
+	FamilyID   string `json:"family_id,omitempty"`
+	FamilySize int64  `json:"family_size"`
 }
 
 type ListOutput struct {
@@ -218,7 +216,7 @@ func New(cfg *config.MCPConfig, recipes *recipe_service.Service, verifier auth.T
 	}
 	result := &Server{recipes: recipes, pictureBase: parsed.Scheme + "://" + parsed.Host + "/api/v1/recipe-pictures/"}
 	server := mcp.NewServer(&mcp.Implementation{Name: "recipes", Version: "1.0.0"}, &mcp.ServerOptions{
-		Instructions: "list_my_recipes/get_my_recipe/create_recipe/update_recipe/link_recipe_variation manage only the authenticated user's own recipes. search_recipes is the one exception: it looks across every user's recipes, read-only, so a fork target's id can be found and passed as create_recipe's variation_of or link_recipe_variation's variation_of. Recipe tags are slugs from list_tags. Pictures cannot be uploaded through this MCP server; attach photos via the website.",
+		Instructions: "list_my_recipes/get_my_recipe/create_recipe/update_recipe/link_recipe_variation manage only the authenticated user's own recipes. search_recipes is the one exception: it looks across every user's recipes, read-only, so the id of a version to join can be found and passed as create_recipe's variation_of or link_recipe_variation's variation_of. Recipe tags are slugs from list_tags. Pictures cannot be uploaded through this MCP server; attach photos via the website.",
 		Capabilities: &mcp.ServerCapabilities{},
 	})
 	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
@@ -237,8 +235,8 @@ func New(cfg *config.MCPConfig, recipes *recipe_service.Service, verifier auth.T
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "list_my_recipes", Description: "List the authenticated user's recipes with cursor pagination and optional localization."}, result.list)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_my_recipe", Description: "Get one recipe owned by the authenticated user, optionally localized."}, result.get)
-	mcp.AddTool(server, &mcp.Tool{Name: "search_recipes", Description: "Search every user's recipes (not just the authenticated user's own) by title, kind, category, author, ingredients, tags, or closeness to a target preparation/total time. Results are grouped by recipe family (one entry per root, with variation_count) unless variation_of is set, which instead lists that family's individual variations. Use this to find a recipe id to pass as create_recipe's variation_of."}, result.search)
-	mcp.AddTool(server, &mcp.Tool{Name: "create_recipe", Description: "Create a complete recipe owned by the authenticated user. Pictures are not supported here; attach them via the website. Set variation_of (found via search_recipes) to submit this as a variation of an existing recipe instead of a new root. Each ingredient needs only a name - quantity, unit, and label are all optional."}, result.create)
+	mcp.AddTool(server, &mcp.Tool{Name: "search_recipes", Description: "Search every user's recipes (not just the authenticated user's own) by title, kind, category, author, ingredients, tags, or closeness to a target preparation/total time. Each family appears once, as its newest version matching the filters, unless family_id is set, which instead lists every version of that family. Use this to find a recipe id to pass as create_recipe's variation_of."}, result.search)
+	mcp.AddTool(server, &mcp.Tool{Name: "create_recipe", Description: "Create a complete recipe owned by the authenticated user. Pictures are not supported here; attach them via the website. Set variation_of (the id of any version in a family, found via search_recipes) to create this as another version of that family. Each ingredient needs only a name - quantity, unit, and label are all optional."}, result.create)
 	mcp.AddTool(server, &mcp.Tool{Name: "update_recipe", Description: "Patch a recipe owned by the authenticated user and optionally reorder or remove existing pictures via keep_picture_ids. New pictures cannot be uploaded here; attach them via the website."}, result.update)
 	mcp.AddTool(server, &mcp.Tool{Name: "link_recipe_variation", Description: "Turn one of the authenticated user's own standalone recipes into a variation of another recipe (any author), found via search_recipes. Fails if the recipe is already a variation, already has its own variations, the target is itself a variation, categories don't match, or it would create a recipe that references its own family. Irreversible through this API."}, result.linkVariation)
 	mcp.AddTool(server, &mcp.Tool{Name: "list_tags", Description: "List the recipe tags (e.g. vegan, gluten-free, one-pot) usable in create_recipe, update_recipe and search_recipes, with their group, the categories (food/diy) they apply to, the tags each one implies, and a label in the requested locale."}, result.listTags)
@@ -352,7 +350,7 @@ func (s *Server) recipeOutput(recipe models.Recipe) RecipeOutput {
 		Title: recipe.Title, Description: recipe.Description, Quantity: recipe.Quantity, Kind: recipe.Kind, Category: recipe.Category,
 		PreparationTime: recipe.PreparationTime, CookingTime: recipe.CookingTime, RestingTime: recipe.RestingTime,
 		Ingredients: ingredientOutputs(recipe.Ingredients), Steps: s.stepOutputs(recipe.Steps), SourceLocale: recipe.SourceLocale, Locale: recipe.Locale,
-		Pictures: []PictureOutput{}, VariationCount: recipe.VariationCount, Tags: recipe.Tags,
+		Pictures: []PictureOutput{}, FamilySize: recipe.FamilySize, Tags: recipe.Tags,
 	}
 	if output.Tags == nil {
 		output.Tags = []string{}
@@ -363,8 +361,8 @@ func (s *Server) recipeOutput(recipe models.Recipe) RecipeOutput {
 	if recipe.Author != nil && recipe.Author.Id != nil {
 		output.Author = &AuthorOutput{ID: recipe.Author.Id.Hex(), Username: recipe.Author.Username}
 	}
-	if recipe.VariationOf != nil {
-		output.VariationOf = recipe.VariationOf.Hex()
+	if recipe.FamilyID != nil {
+		output.FamilyID = recipe.FamilyID.Hex()
 	}
 	for _, picture := range recipe.Pictures {
 		output.Pictures = append(output.Pictures, PictureOutput{ID: picture.Filename, URL: s.pictureBase + picture.Filename})
@@ -461,7 +459,7 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, input Sea
 	items, total, nextOffset, hasNext, err := s.recipes.Search(ctx, models.GetRecipesRequest{
 		Title: input.Title, Kind: input.Kind, Category: input.Category, Author: input.Author,
 		Ingredients: input.Ingredients, Tags: input.Tags, PreparationTime: input.PreparationTime, TotalTime: input.TotalTime,
-		Family: input.VariationOf, Locale: input.Locale,
+		Family: input.FamilyID, Locale: input.Locale,
 	}, offset, limit)
 	if err != nil {
 		return nil, ListOutput{}, err

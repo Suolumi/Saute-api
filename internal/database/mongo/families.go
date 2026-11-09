@@ -12,14 +12,28 @@ import (
 )
 
 // MigrateRecipeFamilies gives every recipe without a family_id its family: the
-// root's id for a variation, its own id otherwise. Idempotent.
+// root's id for a variation, its own id otherwise. It then drops the legacy
+// variation_of field and its index. Idempotent.
 func (c *Client) MigrateRecipeFamilies(ctx context.Context) error {
-	_, err := c.db.Collection(recipesCollection).UpdateMany(ctx,
+	recipes := c.db.Collection(recipesCollection)
+	_, err := recipes.UpdateMany(ctx,
 		bson.M{"family_id": bson.M{"$exists": false}},
 		bson.A{bson.M{"$set": bson.M{"family_id": bson.M{"$ifNull": bson.A{"$variation_of", "$_id"}}}}},
 	)
 	if err != nil {
 		return fmt.Errorf("migrate recipe families: %w", err)
+	}
+	if _, err := recipes.UpdateMany(ctx,
+		bson.M{"variation_of": bson.M{"$exists": true}},
+		bson.M{"$unset": bson.M{"variation_of": ""}},
+	); err != nil {
+		return fmt.Errorf("migrate recipe families: unset variation_of: %w", err)
+	}
+	if _, err := recipes.Indexes().DropOne(ctx, "recipes_variation_of"); err != nil {
+		var cmdErr mongo.CommandError
+		if !errors.As(err, &cmdErr) || (cmdErr.Name != "IndexNotFound" && cmdErr.Code != 27 && cmdErr.Code != 26) {
+			return fmt.Errorf("migrate recipe families: drop recipes_variation_of: %w", err)
+		}
 	}
 	return nil
 }

@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"recipes/internal/database"
 	"recipes/internal/models"
@@ -33,6 +35,11 @@ func TestMigrateRecipeFamiliesSetsFamilyID(t *testing.T) {
 	v2 := insert("V2", &root)
 	standalone := insert("Standalone", nil)
 
+	_, err := db.RawDatabase().Collection("recipes").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "variation_of", Value: 1}}, Options: options.Index().SetSparse(true).SetName("recipes_variation_of"),
+	})
+	require.NoError(t, err)
+
 	require.NoError(t, db.MigrateRecipeFamilies(ctx))
 
 	load := func() map[primitive.ObjectID]bson.M {
@@ -51,6 +58,16 @@ func TestMigrateRecipeFamiliesSetsFamilyID(t *testing.T) {
 		assert.Equal(t, root, first[id]["family_id"])
 	}
 	assert.Equal(t, standalone, first[standalone]["family_id"])
+	for id, doc := range first {
+		assert.NotContains(t, doc, "variation_of", id.Hex())
+	}
+	idx, err := db.RawDatabase().Collection("recipes").Indexes().List(ctx)
+	require.NoError(t, err)
+	var indexes []bson.M
+	require.NoError(t, idx.All(ctx, &indexes))
+	for _, i := range indexes {
+		assert.NotEqual(t, "recipes_variation_of", i["name"])
+	}
 
 	require.NoError(t, db.MigrateRecipeFamilies(ctx))
 	assert.Equal(t, first, load())
