@@ -118,10 +118,9 @@ type GetRecipesRequest struct {
 	// FavoritesOnly is set, and drives the favorites $lookup in
 	// buildRecipeFilterPipeline.
 	FavoritedByUserID string `query:"-"`
-	// ExcludeFamily hides that root id from a listing - used by the "add
-	// recipe as ingredient" picker so a recipe can't offer itself or its own
-	// family as a reference target. UX nicety only; the authoritative
-	// enforcement is recipe_service.validateIngredientRefs.
+	// ExcludeFamily hides that recipe id from a listing - used by the "add
+	// recipe as ingredient" picker so a recipe can't offer itself as a
+	// reference target. UX nicety only; nothing enforces it on write.
 	ExcludeFamily string `query:"exclude_family,omitempty"`
 }
 
@@ -269,13 +268,14 @@ type Recipe struct {
 	// TagMatches is only set by a tag-filtered family listing; see
 	// RecipePreview.TagMatches.
 	TagMatches []TagMatch `bson:"tag_matches,omitempty" json:"-"`
-	// Favorite, FavoriteCount, VariationCount and PictureOutputs are stamped
-	// on after fetch (see recipe_service.decorateFamilyFavorite/
-	// decorateVariationCount/decoratePictureContributors); they never come
-	// from the recipe or translation document itself, hence bson:"-".
+	// Favorite, FavoriteCount, FamilySize and PictureOutputs are stamped on
+	// after fetch (see recipe_service.decorateFavorite/decorateFamilySize/
+	// decoratePictureContributors); they never come from the recipe or
+	// translation document itself, hence bson:"-".
 	Favorite       bool            `bson:"-" json:"favorite"`
 	FavoriteCount  int64           `bson:"-" json:"favorite_count"`
 	VariationCount int64           `bson:"-" json:"variation_count"`
+	FamilySize     int64           `bson:"-" json:"family_size"`
 	PictureOutputs []PictureOutput `bson:"-" json:"pictures"`
 }
 
@@ -353,8 +353,8 @@ type RecipePreview struct {
 	Favorite       bool       `bson:"-" json:"favorite"`
 	FavoriteCount  int64      `bson:"-" json:"favorite_count"`
 	VariationCount int64      `bson:"-" json:"variation_count"`
-	// FamilySize counts the preview's whole family (root + variations); 1
-	// for a standalone recipe.
+	// FamilySize counts every version in the preview's family; 1 for a
+	// standalone recipe.
 	FamilySize int64 `bson:"-" json:"family_size"`
 }
 
@@ -379,12 +379,11 @@ type Ingredient struct {
 	Label    string  `bson:"label,omitempty" json:"label" jsonschema:"Optional section heading grouping this ingredient with others that share the exact same label, e.g. 'For the dough' or 'For the filling'. Leave empty for ingredients that don't belong to a named section. Reuse the identical label text (same wording and case) on every ingredient meant to share a section - matching is normalized server-side but exact reuse is still the reliable way to keep a group together."`
 
 	// RecipeRef, when set, makes this ingredient a reference to another
-	// recipe's root/family instead of free text - Quantity/Unit still mean
-	// "how much of that sub-recipe", scaling with the parent's serving
-	// scaler like any other ingredient. Always a root id, normalized (never
-	// a specific variation) server-side on write, mirroring
-	// CreateRecipe.VariationOf's one-hop flatten. Mutually exclusive with
-	// Name, which is cleared server-side when this is set.
+	// recipe instead of free text - Quantity/Unit still mean "how much of
+	// that sub-recipe", scaling with the parent's serving scaler like any
+	// other ingredient. It points at the exact recipe picked, stored as
+	// given. Mutually exclusive with Name, which is cleared server-side when
+	// this is set.
 	RecipeRef *primitive.ObjectID `bson:"recipe_ref,omitempty" json:"recipe_ref,omitempty"`
 	// RefLabel is an optional custom display label for a reference
 	// ingredient (e.g. "Tarte Dough"); blank falls back to the referenced
@@ -395,7 +394,7 @@ type Ingredient struct {
 	// referenced recipe's live current title, even when RefLabel is set (so
 	// an editor that clears RefLabel can fall back to it without a reload),
 	// resolved fresh on every read (same bson:"-" pattern as
-	// Recipe.VariationCount) so a renamed sub-recipe shows correctly
+	// Recipe.FamilySize) so a renamed sub-recipe shows correctly
 	// everywhere with no migration. Empty when RecipeRef is nil.
 	ResolvedRefTitle string `bson:"-" json:"resolved_ref_title,omitempty"`
 }

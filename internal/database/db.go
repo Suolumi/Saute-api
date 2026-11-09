@@ -40,11 +40,6 @@ type Database interface {
 	DeleteRecipeById(id string) (models.RecipeDB, error)
 	DeleteLocalizedRecipesByID(ctx context.Context, id string) error
 	RecipeConflicts(recipe models.RecipeDB) (models.RecipeDB, error)
-	GetOldestVariationID(ctx context.Context, rootID string) (*primitive.ObjectID, error)
-	RepointVariations(ctx context.Context, oldRootID, newRootID string) error
-	PromoteRecipeToRoot(ctx context.Context, id string) error
-	SetVariationOf(ctx context.Context, recipeID, rootID string) error
-	GetVariationCounts(ctx context.Context, rootIDs []string) (map[string]int64, error)
 	RecipeCountsByCategory(ctx context.Context) (map[string]int64, error)
 	RepointRecipeReferences(ctx context.Context, oldRootID, newRootID string) error
 	HasIncomingReferences(ctx context.Context, recipeID string) (bool, error)

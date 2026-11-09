@@ -289,8 +289,8 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 
 	if parameters.ExcludeFamily != "" {
 		// Used by the "add recipe as ingredient" picker so a recipe can't
-		// offer itself as a reference target. UX nicety only; the
-		// authoritative enforcement is recipe_service.validateIngredientRefs.
+		// offer itself as a reference target. UX nicety only; nothing
+		// enforces it on write.
 		if excludeID, err := primitive.ObjectIDFromHex(parameters.ExcludeFamily); err == nil {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: bson.D{{Key: "$ne", Value: excludeID}}}}}})
 		}
@@ -933,119 +933,6 @@ func (c *Client) RecipeConflicts(recipe models.RecipeDB) (models.RecipeDB, error
 	return models.RecipeDB{}, nil
 }
 
-// GetOldestVariationID returns the id of rootID's oldest remaining variation
-// (by creation order), or (nil, nil) if it has none - a missing result is a
-// valid zero-state, not an error, matching the convention already used by
-// GetFavoriteInfo/favoritedRecipeIDs for "nothing found".
-func (c *Client) GetOldestVariationID(ctx context.Context, rootID string) (*primitive.ObjectID, error) {
-	rootObjectID, err := primitive.ObjectIDFromHex(rootID)
-	if err != nil {
-		return nil, err
-	}
-	var doc struct {
-		ID primitive.ObjectID `bson:"_id"`
-	}
-	err = c.db.Collection(recipesCollection).FindOne(ctx,
-		bson.M{"variation_of": rootObjectID},
-		options.FindOne().SetSort(bson.D{{Key: "_id", Value: 1}}).SetProjection(bson.M{"_id": 1}),
-	).Decode(&doc)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &doc.ID, nil
-}
-
-// RepointVariations re-points every variation of oldRootID (other than
-// newRootID itself) to newRootID.
-func (c *Client) RepointVariations(ctx context.Context, oldRootID, newRootID string) error {
-	oldRootObjectID, err := primitive.ObjectIDFromHex(oldRootID)
-	if err != nil {
-		return err
-	}
-	newRootObjectID, err := primitive.ObjectIDFromHex(newRootID)
-	if err != nil {
-		return err
-	}
-	_, err = c.db.Collection(recipesCollection).UpdateMany(ctx,
-		bson.M{"variation_of": oldRootObjectID, "_id": bson.M{"$ne": newRootObjectID}},
-		bson.M{"$set": bson.M{"variation_of": newRootObjectID}},
-	)
-	return err
-}
-
-// PromoteRecipeToRoot clears id's variation_of, making it a root.
-func (c *Client) PromoteRecipeToRoot(ctx context.Context, id string) error {
-	objectID, err := primitive.ObjectIDFromHex(id)
-	if err != nil {
-		return err
-	}
-	_, err = c.db.Collection(recipesCollection).UpdateOne(ctx,
-		bson.M{"_id": objectID},
-		bson.M{"$unset": bson.M{"variation_of": ""}},
-	)
-	return err
-}
-
-// SetVariationOf points recipeID at rootID, turning a standalone recipe into
-// a variation - the counterpart of PromoteRecipeToRoot, which clears the
-// field back off.
-func (c *Client) SetVariationOf(ctx context.Context, recipeID, rootID string) error {
-	objectID, err := primitive.ObjectIDFromHex(recipeID)
-	if err != nil {
-		return err
-	}
-	rootObjectID, err := primitive.ObjectIDFromHex(rootID)
-	if err != nil {
-		return err
-	}
-	_, err = c.db.Collection(recipesCollection).UpdateOne(ctx,
-		bson.M{"_id": objectID},
-		bson.M{"$set": bson.M{"variation_of": rootObjectID}},
-	)
-	return err
-}
-
-// GetVariationCounts returns, for each given root id, how many variations it
-// has. A root with none is simply absent from the map.
-func (c *Client) GetVariationCounts(ctx context.Context, rootIDs []string) (map[string]int64, error) {
-	result := make(map[string]int64, len(rootIDs))
-	objectIDs := make([]primitive.ObjectID, 0, len(rootIDs))
-	for _, id := range rootIDs {
-		objectID, err := primitive.ObjectIDFromHex(id)
-		if err != nil {
-			return nil, err
-		}
-		objectIDs = append(objectIDs, objectID)
-	}
-	if len(objectIDs) == 0 {
-		return result, nil
-	}
-	cursor, err := c.db.Collection(recipesCollection).Aggregate(ctx, bson.A{
-		bson.D{{Key: "$match", Value: bson.D{{Key: "variation_of", Value: bson.D{{Key: "$in", Value: objectIDs}}}}}},
-		bson.D{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$variation_of"},
-			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
-		}}},
-	})
-	if err != nil {
-		return nil, err
-	}
-	var docs []struct {
-		ID    primitive.ObjectID `bson:"_id"`
-		Count int64              `bson:"count"`
-	}
-	if err := cursor.All(ctx, &docs); err != nil {
-		return nil, err
-	}
-	for _, doc := range docs {
-		result[doc.ID.Hex()] = doc.Count
-	}
-	return result, nil
-}
-
 // RecipeCountsByCategory returns the number of recipes per category, keyed by
 // category string ("food"/"diy"). Legacy documents with no category field
 // (predating GetRecipesRequest.Category, see buildRecipeFilterPipeline) count
@@ -1075,10 +962,9 @@ func (c *Client) RecipeCountsByCategory(ctx context.Context) (map[string]int64, 
 }
 
 // RepointRecipeReferences updates every ingredients[].recipe_ref equal to
-// oldRootID (across all recipes) to point at newRootID instead - the
-// cross-recipe-reference analogue of RepointVariations, needing a filtered
-// positional array update since recipe_ref lives inside an ingredients
-// array, not a top-level scalar.
+// oldRootID (across all recipes) to point at newRootID instead, with a
+// filtered positional array update since recipe_ref lives inside an
+// ingredients array, not a top-level scalar.
 func (c *Client) RepointRecipeReferences(ctx context.Context, oldRootID, newRootID string) error {
 	oldRootObjectID, err := primitive.ObjectIDFromHex(oldRootID)
 	if err != nil {

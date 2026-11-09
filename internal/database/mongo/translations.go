@@ -28,7 +28,7 @@ type recipeTranslationDocument struct {
 	RestingTime     int                   `bson:"resting_time,omitempty"`
 	Ingredients     []models.Ingredient   `bson:"ingredients,omitempty"`
 	Steps           []models.Step         `bson:"steps,omitempty"`
-	// Pictures is deliberately absent: like VariationOf, pictures are
+	// Pictures is deliberately absent: like FamilyID, pictures are
 	// structural, not translatable content - pickTranslation always takes
 	// them from the canonical recipe, never from a translation row.
 	SourceLocale string `bson:"source_locale,omitempty"`

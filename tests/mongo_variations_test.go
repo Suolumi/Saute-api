@@ -244,48 +244,6 @@ func TestGetRecipeDocumentsBoostedTreatsVariationFavoriteAsFamilyFavorite(t *tes
 	assert.Equal(t, int64(3), total)
 }
 
-func TestVariationCountsAndPromotion(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	author := insertTestUser(t, db, ctx, "promotion-author")
-	root := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Root", "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})
-	oldest := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Oldest variation", "variation_of": root, "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})
-	newest := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Newest variation", "variation_of": root, "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})
-
-	counts, err := db.GetVariationCounts(ctx, []string{root.Hex()})
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), counts[root.Hex()])
-
-	oldestID, err := db.GetOldestVariationID(ctx, root.Hex())
-	require.NoError(t, err)
-	require.NotNil(t, oldestID)
-	assert.Equal(t, oldest.Hex(), oldestID.Hex())
-
-	require.NoError(t, db.RepointVariations(ctx, root.Hex(), oldest.Hex()))
-	require.NoError(t, db.PromoteRecipeToRoot(ctx, oldest.Hex()))
-
-	// newest is now a variation of oldest, not of root.
-	reloadedNewest, err := db.GetRecipeById(newest.Hex())
-	require.NoError(t, err)
-	require.NotNil(t, reloadedNewest.VariationOf)
-	assert.Equal(t, oldest.Hex(), reloadedNewest.VariationOf.Hex())
-
-	// oldest itself is now a root (variation_of unset).
-	reloadedOldest, err := db.GetRecipeById(oldest.Hex())
-	require.NoError(t, err)
-	assert.Nil(t, reloadedOldest.VariationOf)
-
-	// root's family no longer has any variations - they were all re-pointed.
-	countsAfter, err := db.GetVariationCounts(ctx, []string{root.Hex()})
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), countsAfter[root.Hex()])
-
-	countsForOldest, err := db.GetVariationCounts(ctx, []string{oldest.Hex()})
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), countsForOldest[oldest.Hex()])
-}
-
 // TestGetRecipeDocumentsOwnRecipesFlatAcrossAllUsers backs the admin
 // back-office's moderation browse view (handlers.AdminListRecipes): OwnRecipes
 // with no Author filter must return every recipe and variation from every

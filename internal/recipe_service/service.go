@@ -48,31 +48,20 @@ var (
 	ErrPictureNotFound   = errors.New("picture not found")
 	ErrPictureCapReached = errors.New("picture cap reached for this contributor")
 	ErrForbidden         = errors.New("forbidden")
-	// ErrAlreadyVariation is LinkVariation's guard against a source recipe
-	// that's already a variation of something - only a standalone recipe
-	// (VariationOf == nil) can be linked; re-parenting an existing variation
-	// is out of scope (see DetachVariation for the one existing way back to
-	// standalone).
-	ErrAlreadyVariation = errors.New("recipe is already a variation")
-	// ErrRecipeHasVariations is LinkVariation's guard against a source recipe
-	// that already has its own variations - linking it would require
-	// promoting/repointing a whole subtree, which this operation doesn't do.
-	ErrRecipeHasVariations = errors.New("recipe already has its own variations")
-	// ErrTargetIsVariation is LinkVariation's guard requiring the target to
-	// be a genuine root - unlike Create's variation_of, this never
-	// auto-flattens to the target's own root.
-	ErrTargetIsVariation = errors.New("target recipe is itself a variation")
+	// ErrAlreadyInFamily is LinkVariation's guard: only a standalone recipe
+	// (family size 1) can join a family; families are never merged.
+	ErrAlreadyInFamily = errors.New("recipe is already part of a family")
 	// ErrCategoryMismatch is LinkVariation's guard requiring the source and
 	// target to share the same category (food/diy).
 	ErrCategoryMismatch = errors.New("recipe and target must share the same category")
 	// ErrReferenceLoop is LinkVariation's guard against linking a recipe that
 	// would make some family member's ingredient reference its own family -
-	// either because the source already references the target, or because
-	// something in the target's family already references the source.
+	// either because the source already references a member of the target's
+	// family, or because something in that family references the source.
 	ErrReferenceLoop = errors.New("linking would create a recipe that references its own family")
-	// ErrNotVariation is DetachVariation's guard: only an actual variation
-	// (VariationOf != nil) can be detached back to standalone.
-	ErrNotVariation = errors.New("recipe is not a variation")
+	// ErrNotInFamily is DetachVariation's guard: a standalone recipe has
+	// nothing to detach from.
+	ErrNotInFamily = errors.New("recipe is not part of a family")
 	// ErrSuggestionNotFound is SubmitTranslationSuggestion's/
 	// ApproveTranslationSuggestion's/RejectTranslationSuggestion's guard
 	// against an unknown suggestion id.
@@ -140,14 +129,14 @@ type Store interface {
 	AddLocaleRecipe(recipe models.Recipe, locale string) (models.Recipe, error)
 	DeleteRecipeById(id string) (models.RecipeDB, error)
 	DeleteLocalizedRecipesByID(ctx context.Context, id string) error
-	GetOldestVariationID(ctx context.Context, rootID string) (*primitive.ObjectID, error)
-	RepointVariations(ctx context.Context, oldRootID, newRootID string) error
-	PromoteRecipeToRoot(ctx context.Context, id string) error
-	SetVariationOf(ctx context.Context, recipeID, rootID string) error
-	GetVariationCounts(ctx context.Context, rootIDs []string) (map[string]int64, error)
+	GetFamilySizes(ctx context.Context, familyIDs []string) (map[string]int64, error)
+	GetNewestFamilyMemberID(ctx context.Context, familyID, excludeID string) (*primitive.ObjectID, error)
+	SetFamilyID(ctx context.Context, recipeID, familyID string) error
+	RekeyFamily(ctx context.Context, familyID, excludeID, newFamilyID string) error
 	RepointRecipeReferences(ctx context.Context, oldRootID, newRootID string) error
 	HasIncomingReferences(ctx context.Context, recipeID string) (bool, error)
-	FamilyReferencesRecipe(ctx context.Context, familyRootID, targetID string) (bool, error)
+	FamilyReferencesRecipe(ctx context.Context, familyID, targetID string) (bool, error)
+	RecipeReferencesFamily(ctx context.Context, recipeID, familyID string) (bool, error)
 	GetRecipeTitles(ctx context.Context, ids []string) (map[string]string, error)
 	GetUsersByIDs(ctx context.Context, ids []string) (map[string]models.UserView, error)
 
@@ -155,7 +144,7 @@ type Store interface {
 	RemoveFavorite(ctx context.Context, userID, recipeID string) error
 	DeleteFavoritesByRecipeID(ctx context.Context, recipeID string) error
 	GetFavoriteInfo(ctx context.Context, ids []string, userID string) (map[string]models.FavoriteInfo, error)
-	GetFamilyFavoriteInfo(ctx context.Context, rootIDs []string, userID string) (map[string]models.FavoriteInfo, error)
+	GetFamilyFavoriteInfo(ctx context.Context, familyIDs []string, userID string) (map[string]models.FavoriteInfo, error)
 
 	CreateTranslationSuggestion(ctx context.Context, suggestion models.TranslationSuggestion) (models.TranslationSuggestion, error)
 	GetTranslationSuggestionById(ctx context.Context, id string) (models.TranslationSuggestion, error)
@@ -359,10 +348,11 @@ func sourceHash(recipe models.RecipeDB) string {
 	recipe.Locale = ""
 	recipe.SourceHash = ""
 	recipe.VariationOf = nil
+	recipe.FamilyID = nil
 	// Tags aren't translated either, and an implication backfill rewrites
 	// them directly in the DB without recomputing this hash.
 	recipe.Tags = nil
-	// Pictures are structural, not translatable content (like VariationOf
+	// Pictures are structural, not translatable content (like FamilyID
 	// above): excluding them keeps a picture add/remove from invalidating an
 	// otherwise-current stored translation - see pickTranslation, which
 	// likewise always takes Pictures from the canonical recipe.
@@ -467,17 +457,19 @@ func (s *Service) normalizeAndWriteAllPictures(pictures []PictureUpload, stepUpl
 	return recipeFilenames, stepFilenames, nil
 }
 
-// rootCategoryOf fetches rootID's Category, defaulted like defaultCategory.
-// Used to enforce that a variation's category always matches its root's.
-func (s *Service) rootCategoryOf(rootID *primitive.ObjectID) (models.RecipeCategory, error) {
-	root, err := s.db.GetRecipeById(rootID.Hex())
-	if err != nil {
-		if errors.Is(err, mongorepo.NotFoundError) {
-			return "", ErrNotFound
-		}
-		return "", err
+// familyCategoryOf returns the category of familyID's newest member other
+// than excludeID, defaulted like defaultCategory; false when there is none.
+// Every member of a family shares one category.
+func (s *Service) familyCategoryOf(ctx context.Context, familyID, excludeID string) (models.RecipeCategory, bool, error) {
+	newest, err := s.db.GetNewestFamilyMemberID(ctx, familyID, excludeID)
+	if err != nil || newest == nil {
+		return "", false, err
 	}
-	return defaultCategory(root.Category), nil
+	member, err := s.db.GetRecipeById(newest.Hex())
+	if err != nil {
+		return "", false, err
+	}
+	return defaultCategory(member.Category), true, nil
 }
 
 func (s *Service) Create(ctx context.Context, authorID string, input models.CreateRecipe, pictures []PictureUpload, stepPictures map[int]PictureUpload) (models.Recipe, error) {
@@ -496,7 +488,7 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 		PreparationTime: input.PreparationTime, CookingTime: input.CookingTime, RestingTime: input.RestingTime,
 		Ingredients: input.Ingredients, Steps: input.Steps, Tags: input.Tags, SourceLocale: input.SourceLocale,
 	}
-	var variationRootCategory models.RecipeCategory
+	var familyCategory models.RecipeCategory
 	if input.VariationOf != nil {
 		target, err := s.db.GetRecipeById(input.VariationOf.Hex())
 		if err != nil {
@@ -505,18 +497,8 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 			}
 			return models.Recipe{}, err
 		}
-		root := target.Id
-		variationRootCategory = defaultCategory(target.Category)
-		// Always flatten to the target's own root - a variation never chains
-		// off another variation.
-		if target.VariationOf != nil {
-			root = target.VariationOf
-			variationRootCategory, err = s.rootCategoryOf(root)
-			if err != nil {
-				return models.Recipe{}, err
-			}
-		}
-		recipeDB.VariationOf = root
+		recipeDB.FamilyID = target.FamilyID
+		familyCategory = defaultCategory(target.Category)
 	}
 	if recipeDB.SourceLocale == "" && s.translator != nil {
 		detected, detectErr := s.translator.GetRecipeLocale(models.Recipe{Ingredients: recipeDB.Ingredients})
@@ -530,8 +512,8 @@ func (s *Service) Create(ctx context.Context, authorID string, input models.Crea
 	if err := s.resolveRecipeTags(ctx, &recipeDB); err != nil {
 		return models.Recipe{}, err
 	}
-	if recipeDB.VariationOf != nil && recipeDB.Category != variationRootCategory {
-		return models.Recipe{}, fmt.Errorf("%w: a variation's category must match its root recipe's category", ErrInvalid)
+	if input.VariationOf != nil && recipeDB.Category != familyCategory {
+		return models.Recipe{}, fmt.Errorf("%w: a version's category must match its family's category", ErrInvalid)
 	}
 	stepIndices, stepUploads, err := s.stepPictureUploads(stepPictures, len(recipeDB.Steps))
 	if err != nil {
@@ -722,13 +704,13 @@ func (s *Service) Update(ctx context.Context, recipe models.Recipe, patch models
 	if err := s.resolveRecipeTags(ctx, &merged); err != nil {
 		return models.Recipe{}, err
 	}
-	if merged.VariationOf != nil {
-		rootCategory, err := s.rootCategoryOf(merged.VariationOf)
+	if recipe.FamilyID != nil {
+		familyCategory, inFamily, err := s.familyCategoryOf(ctx, recipe.FamilyID.Hex(), recipe.Id.Hex())
 		if err != nil {
 			return models.Recipe{}, err
 		}
-		if merged.Category != rootCategory {
-			return models.Recipe{}, fmt.Errorf("%w: a variation's category must match its root recipe's category", ErrInvalid)
+		if inFamily && merged.Category != familyCategory {
+			return models.Recipe{}, fmt.Errorf("%w: a version's category must match its family's category", ErrInvalid)
 		}
 	}
 	stepIndices, stepUploads, err := s.stepPictureUploads(stepPictures, len(merged.Steps))
@@ -918,10 +900,8 @@ func (s *Service) GetForUser(ctx context.Context, recipeID, userID, locale strin
 	}
 	localized := s.localize(recipe, locale)
 	// GetForUser is an internal author-scoped fetch (MCP), not a
-	// social/discovery view, so it deliberately skips favorite decoration
-	// (like Get does not) - but variation_count is still cheap and useful
-	// for an MCP client managing its own recipes, so it's decorated here.
-	s.decorateVariationCount(ctx, &localized)
+	// social/discovery view, so it deliberately skips favorite decoration.
+	s.decorateFamilySize(ctx, &localized)
 	s.decorateRefTitle(ctx, &localized)
 	return localized, nil
 }
@@ -948,7 +928,7 @@ func (s *Service) Get(ctx context.Context, recipeID, locale, userID string) (mod
 	// family - see List) - a user favoriting one variation shouldn't make
 	// every other member of the family look favorited when viewed directly.
 	s.decorateFavorite(ctx, &localized, userID)
-	s.decorateVariationCount(ctx, &localized)
+	s.decorateFamilySize(ctx, &localized)
 	s.decorateRefTitle(ctx, &localized)
 	s.decoratePictureContributors(ctx, &localized)
 	return localized, nil
@@ -1023,142 +1003,103 @@ func (s *Service) decorateFavoritePreviews(ctx context.Context, previews []model
 	}
 }
 
-// familyRootHex returns id's own hex when it's a root, or its VariationOf's
-// hex when it's a variation - the family root every family-wide decoration
-// (favorites, variation count) is keyed by.
-func familyRootHex(id, variationOf *primitive.ObjectID) string {
-	if variationOf != nil {
-		return variationOf.Hex()
-	}
-	if id != nil {
-		return id.Hex()
-	}
-	return ""
-}
-
 // decorateFamilyFavoritePreviews stamps Favorite/FavoriteCount onto a page of
 // previews, counting distinct people who favorited any member of each
-// preview's family (root or any variation), not just the preview itself -
-// see decision #6. Used only by the family-collapsed discovery listing
-// (List's default mode); every other listing mode, and single-recipe fetches
-// (Get), show each recipe's own exact favorite status instead - see
-// decorateFavoritePreviews/decorateFavorite.
+// preview's family, not just the preview itself. Used only by the
+// family-collapsed discovery listing (List's default mode); every other
+// listing mode, and single-recipe fetches (Get), show each recipe's own exact
+// favorite status instead - see decorateFavoritePreviews/decorateFavorite.
 func (s *Service) decorateFamilyFavoritePreviews(ctx context.Context, previews []models.RecipePreview, userID string) {
-	rootHexes := make([]string, 0, len(previews))
-	seen := make(map[string]struct{}, len(previews))
-	for _, preview := range previews {
-		rootHex := familyRootHex(preview.Id, preview.VariationOf)
-		if rootHex == "" {
-			continue
-		}
-		if _, ok := seen[rootHex]; ok {
-			continue
-		}
-		seen[rootHex] = struct{}{}
-		rootHexes = append(rootHexes, rootHex)
+	familyIDs := make([]*primitive.ObjectID, len(previews))
+	for i := range previews {
+		familyIDs[i] = previews[i].FamilyID
 	}
-	if len(rootHexes) == 0 {
+	ids := uniqueHexes(familyIDs)
+	if len(ids) == 0 {
 		return
 	}
-	info, err := s.db.GetFamilyFavoriteInfo(ctx, rootHexes, userID)
+	info, err := s.db.GetFamilyFavoriteInfo(ctx, ids, userID)
 	if err != nil {
 		utils.LogError("could not load family favorite info", err)
 		return
 	}
 	for i := range previews {
-		rootHex := familyRootHex(previews[i].Id, previews[i].VariationOf)
-		if fav, ok := info[rootHex]; ok {
+		if previews[i].FamilyID == nil {
+			continue
+		}
+		if fav, ok := info[previews[i].FamilyID.Hex()]; ok {
 			previews[i].Favorite = fav.Favorited
 			previews[i].FavoriteCount = fav.Count
 		}
 	}
 }
 
-// decorateVariationCount stamps VariationCount onto recipe; a no-op (count 0)
-// when recipe is itself a variation, since VariationCount describes a root's
-// family size, not "siblings of this variation".
-func (s *Service) decorateVariationCount(ctx context.Context, recipe *models.Recipe) {
-	if recipe.Id == nil || recipe.VariationOf != nil {
-		return
-	}
-	counts, err := s.db.GetVariationCounts(ctx, []string{recipe.Id.Hex()})
-	if err != nil {
-		utils.LogError("could not load variation count", err)
-		return
-	}
-	recipe.VariationCount = counts[recipe.Id.Hex()]
-}
-
-// decorateVariationCountsPreviews is decorateVariationCount for a page of
-// previews, fetched in one batched lookup.
-func (s *Service) decorateVariationCountsPreviews(ctx context.Context, previews []models.RecipePreview) {
-	ids := make([]string, 0, len(previews))
-	for _, preview := range previews {
-		if preview.Id != nil && preview.VariationOf == nil {
-			ids = append(ids, preview.Id.Hex())
-		}
-	}
-	if len(ids) == 0 {
-		return
-	}
-	counts, err := s.db.GetVariationCounts(ctx, ids)
-	if err != nil {
-		utils.LogError("could not load variation counts", err)
-		return
-	}
-	for i := range previews {
-		if previews[i].Id != nil && previews[i].VariationOf == nil {
-			previews[i].VariationCount = counts[previews[i].Id.Hex()]
-		}
-	}
-}
-
-// decorateFamilySizes stamps FamilySize onto every preview, root or
-// variation, keyed by its family root.
-func (s *Service) decorateFamilySizes(ctx context.Context, previews []models.RecipePreview) {
-	roots := make([]string, 0, len(previews))
-	seen := make(map[string]struct{}, len(previews))
-	for _, preview := range previews {
-		rootHex := familyRootHex(preview.Id, preview.VariationOf)
-		if _, ok := seen[rootHex]; rootHex == "" || ok {
+// uniqueHexes returns the distinct hex forms of ids, skipping nils, in first
+// seen order.
+func uniqueHexes(ids []*primitive.ObjectID) []string {
+	hexes := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == nil {
 			continue
 		}
-		seen[rootHex] = struct{}{}
-		roots = append(roots, rootHex)
+		hex := id.Hex()
+		if _, ok := seen[hex]; ok {
+			continue
+		}
+		seen[hex] = struct{}{}
+		hexes = append(hexes, hex)
 	}
-	if len(roots) == 0 {
-		return
+	return hexes
+}
+
+// familySizes returns the member count of each distinct non-nil family id in
+// one batched lookup. A lookup failure is logged and yields an empty map.
+func (s *Service) familySizes(ctx context.Context, familyIDs []*primitive.ObjectID) map[string]int64 {
+	ids := uniqueHexes(familyIDs)
+	if len(ids) == 0 {
+		return map[string]int64{}
 	}
-	counts, err := s.db.GetVariationCounts(ctx, roots)
+	sizes, err := s.db.GetFamilySizes(ctx, ids)
 	if err != nil {
 		utils.LogError("could not load family sizes", err)
-		return
+		return map[string]int64{}
 	}
-	for i := range previews {
-		previews[i].FamilySize = 1 + counts[familyRootHex(previews[i].Id, previews[i].VariationOf)]
+	return sizes
+}
+
+// decorateFamilySize stamps FamilySize onto recipe.
+func (s *Service) decorateFamilySize(ctx context.Context, recipe *models.Recipe) {
+	if recipe.FamilyID != nil {
+		recipe.FamilySize = s.familySizes(ctx, []*primitive.ObjectID{recipe.FamilyID})[recipe.FamilyID.Hex()]
 	}
 }
 
-// decorateVariationCounts is decorateVariationCountsPreviews for a page of
-// full recipes rather than previews.
-func (s *Service) decorateVariationCounts(ctx context.Context, recipes []models.Recipe) {
-	ids := make([]string, 0, len(recipes))
-	for _, recipe := range recipes {
-		if recipe.Id != nil && recipe.VariationOf == nil {
-			ids = append(ids, recipe.Id.Hex())
+// decorateFamilySizes stamps FamilySize onto every preview, keyed by its
+// FamilyID.
+func (s *Service) decorateFamilySizes(ctx context.Context, previews []models.RecipePreview) {
+	familyIDs := make([]*primitive.ObjectID, len(previews))
+	for i := range previews {
+		familyIDs[i] = previews[i].FamilyID
+	}
+	sizes := s.familySizes(ctx, familyIDs)
+	for i := range previews {
+		if previews[i].FamilyID != nil {
+			previews[i].FamilySize = sizes[previews[i].FamilyID.Hex()]
 		}
 	}
-	if len(ids) == 0 {
-		return
-	}
-	counts, err := s.db.GetVariationCounts(ctx, ids)
-	if err != nil {
-		utils.LogError("could not load variation counts", err)
-		return
-	}
+}
+
+// decorateFamilySizesRecipes is decorateFamilySizes for full recipes.
+func (s *Service) decorateFamilySizesRecipes(ctx context.Context, recipes []models.Recipe) {
+	familyIDs := make([]*primitive.ObjectID, len(recipes))
 	for i := range recipes {
-		if recipes[i].Id != nil && recipes[i].VariationOf == nil {
-			recipes[i].VariationCount = counts[recipes[i].Id.Hex()]
+		familyIDs[i] = recipes[i].FamilyID
+	}
+	sizes := s.familySizes(ctx, familyIDs)
+	for i := range recipes {
+		if recipes[i].FamilyID != nil {
+			recipes[i].FamilySize = sizes[recipes[i].FamilyID.Hex()]
 		}
 	}
 }
@@ -1227,13 +1168,13 @@ func wantsTranslation(canonical models.Recipe, requested string) bool {
 
 // pickTranslation returns the stored translation when it matches the canonical's
 // source hash, otherwise the canonical recipe. Either way Locale is stamped with
-// what is actually being served. VariationOf, Pictures and Tags always come from
+// what is actually being served. FamilyID, Pictures and Tags always come from
 // canonical: they aren't translatable content, and a tag backfill only updates
 // the canonical recipe.
 func pickTranslation(canonical, translation models.Recipe, requested string, found bool) models.Recipe {
 	if found && translation.SourceHash != "" && translation.SourceHash == canonical.SourceHash {
 		translation.Locale = requested
-		translation.VariationOf = canonical.VariationOf
+		translation.FamilyID = canonical.FamilyID
 		translation.Pictures = canonical.Pictures
 		translation.Tags = canonical.Tags
 		return translation
@@ -1311,7 +1252,6 @@ func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest,
 	} else {
 		s.decorateFamilyFavoritePreviews(ctx, previews, userID)
 	}
-	s.decorateVariationCountsPreviews(ctx, previews)
 	s.decorateFamilySizes(ctx, previews)
 	return previews, count, nil
 }
@@ -1337,7 +1277,7 @@ func (s *Service) ListForUser(ctx context.Context, userID, cursor string, limit 
 		documents = documents[:limit]
 	}
 	previews := s.localizePreviews(ctx, documents, locale)
-	s.decorateVariationCountsPreviews(ctx, previews)
+	s.decorateFamilySizes(ctx, previews)
 	return previews, count, next, nil
 }
 
@@ -1367,7 +1307,7 @@ func (s *Service) ListDetailedForUser(ctx context.Context, userID, cursor string
 		documents = documents[:limit]
 	}
 	recipes := s.localizeBatch(ctx, documents, locale)
-	s.decorateVariationCounts(ctx, recipes)
+	s.decorateFamilySizesRecipes(ctx, recipes)
 	refs := make([]*models.Recipe, len(recipes))
 	for i := range recipes {
 		refs[i] = &recipes[i]
@@ -1402,7 +1342,7 @@ func (s *Service) Search(ctx context.Context, parameters models.GetRecipesReques
 		nextOffset = offset + limit
 	}
 	recipes = s.localizeBatch(ctx, documents, parameters.Locale)
-	s.decorateVariationCounts(ctx, recipes)
+	s.decorateFamilySizesRecipes(ctx, recipes)
 	refs := make([]*models.Recipe, len(recipes))
 	for i := range recipes {
 		refs[i] = &recipes[i]
@@ -1474,7 +1414,7 @@ func (s *Service) localizePreviews(ctx context.Context, documents []models.Recip
 			PreparationTime: recipe.PreparationTime, CookingTime: recipe.CookingTime, RestingTime: recipe.RestingTime,
 			Kind: recipe.Kind, Category: recipe.Category, Quantity: recipe.Quantity, Pictures: pictureFilenames(recipe.Pictures),
 			Tags: recipe.Tags, SourceLocale: recipe.SourceLocale, Locale: recipe.Locale, VariationOf: recipe.VariationOf,
-			TagMatches: recipe.TagMatches,
+			FamilyID: recipe.FamilyID, TagMatches: recipe.TagMatches,
 		})
 	}
 	s.localizeTagMatches(ctx, previews, requested)
@@ -1492,36 +1432,32 @@ func (s *Service) Delete(ctx context.Context, recipeID string) (models.RecipeDB,
 	if favorites[recipeID].Count > 0 {
 		return models.RecipeDB{}, ErrHasFavorites
 	}
-	// If recipeID has variations, promote the oldest one to be the new root
-	// and re-point the rest to it before deleting recipeID itself (decision
-	// #2). No DB transactions are available, so this relies on ordering, not
-	// atomicity, to stay crash-safe: a crash here either leaves recipeID
-	// fully intact (safe retry from scratch) or leaves promotion already
-	// applied with recipeID merely not-yet-deleted (a harmless, retry-safe
-	// duplicate root until the retry finishes).
-	oldestID, err := s.db.GetOldestVariationID(ctx, recipeID)
+	referenced, err := s.db.HasIncomingReferences(ctx, recipeID)
 	if err != nil {
 		return models.RecipeDB{}, err
 	}
-	if oldestID != nil {
-		if err := s.db.RepointVariations(ctx, recipeID, oldestID.Hex()); err != nil {
-			return models.RecipeDB{}, err
-		}
-		if err := s.db.PromoteRecipeToRoot(ctx, oldestID.Hex()); err != nil {
-			return models.RecipeDB{}, err
-		}
-		if err := s.db.RepointRecipeReferences(ctx, recipeID, oldestID.Hex()); err != nil {
-			return models.RecipeDB{}, err
-		}
-	} else {
-		// No variation to promote in recipeID's place, so any incoming
-		// reference would be orphaned by deleting it - block instead.
-		referenced, err := s.db.HasIncomingReferences(ctx, recipeID)
+	if referenced {
+		// Refs move to the newest remaining version so they keep pointing
+		// into the same family; with none left they'd dangle, so block.
+		recipe, err := s.db.GetRecipeById(recipeID)
 		if err != nil {
+			if errors.Is(err, mongorepo.NotFoundError) {
+				return models.RecipeDB{}, ErrNotFound
+			}
 			return models.RecipeDB{}, err
 		}
-		if referenced {
+		var newest *primitive.ObjectID
+		if recipe.FamilyID != nil {
+			newest, err = s.db.GetNewestFamilyMemberID(ctx, recipe.FamilyID.Hex(), recipeID)
+			if err != nil {
+				return models.RecipeDB{}, err
+			}
+		}
+		if newest == nil {
 			return models.RecipeDB{}, ErrRecipeReferenced
+		}
+		if err := s.db.RepointRecipeReferences(ctx, recipeID, newest.Hex()); err != nil {
+			return models.RecipeDB{}, err
 		}
 	}
 	deleted, err := s.db.DeleteRecipeById(recipeID)
@@ -1544,17 +1480,13 @@ func (s *Service) Delete(ctx context.Context, recipeID string) (models.RecipeDB,
 	return deleted, nil
 }
 
-// LinkVariation turns recipeID, a standalone recipe (VariationOf == nil, no
-// variations of its own), into a variation of targetID, a genuine root
-// (never auto-flattened, unlike Create's variation_of - the caller must pass
-// the actual root). Reachable by the recipe's own author or an admin (see
-// handlers.RecipeAuthorMiddleware). Guards, in order: not the same recipe,
-// source isn't already a variation, source has no variations of its own,
-// target exists and is a root, categories match, and neither side's family
-// already references the other (see ErrReferenceLoop) - the reference-loop
-// check that Create's variation_of never needed, since linking (unlike
-// submitting a new recipe) can retroactively join two families that already
-// carry independent RecipeRef ingredients.
+// LinkVariation moves recipeID, a standalone recipe (family size 1), into
+// targetID's family; targetID may be any member. Reachable by the recipe's
+// own author or an admin (see handlers.RecipeAuthorMiddleware). Guards, in
+// order: not the same recipe, source is standalone, target exists,
+// categories match, and neither side already references the other (see
+// ErrReferenceLoop) - linking, unlike submitting a new version, can join two
+// recipes that already carry RecipeRef ingredients.
 func (s *Service) LinkVariation(ctx context.Context, recipeID, targetID string) (models.Recipe, error) {
 	if _, err := primitive.ObjectIDFromHex(recipeID); err != nil {
 		return models.Recipe{}, ErrNotFound
@@ -1563,77 +1495,101 @@ func (s *Service) LinkVariation(ctx context.Context, recipeID, targetID string) 
 		return models.Recipe{}, fmt.Errorf("%w: invalid variation_of", ErrInvalid)
 	}
 	if recipeID == targetID {
-		return models.Recipe{}, fmt.Errorf("%w: a recipe cannot be a variation of itself", ErrInvalid)
+		return models.Recipe{}, fmt.Errorf("%w: a recipe cannot be a version of itself", ErrInvalid)
 	}
-	source, err := s.db.GetRecipeById(recipeID)
-	if err != nil {
-		if errors.Is(err, mongorepo.NotFoundError) {
-			return models.Recipe{}, ErrNotFound
-		}
-		return models.Recipe{}, err
-	}
-	if source.VariationOf != nil {
-		return models.Recipe{}, ErrAlreadyVariation
-	}
-	counts, err := s.db.GetVariationCounts(ctx, []string{recipeID})
+	source, err := s.getRecipe(recipeID)
 	if err != nil {
 		return models.Recipe{}, err
 	}
-	if counts[recipeID] > 0 {
-		return models.Recipe{}, ErrRecipeHasVariations
+	if source.FamilyID == nil {
+		return models.Recipe{}, fmt.Errorf("recipe %s has no family id", recipeID)
 	}
-	target, err := s.db.GetRecipeById(targetID)
+	sourceFamily := source.FamilyID.Hex()
+	sizes, err := s.db.GetFamilySizes(ctx, []string{sourceFamily})
 	if err != nil {
-		if errors.Is(err, mongorepo.NotFoundError) {
-			return models.Recipe{}, ErrNotFound
-		}
 		return models.Recipe{}, err
 	}
-	if target.VariationOf != nil {
-		return models.Recipe{}, ErrTargetIsVariation
+	if sizes[sourceFamily] > 1 {
+		return models.Recipe{}, ErrAlreadyInFamily
 	}
+	target, err := s.getRecipe(targetID)
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	if target.FamilyID == nil {
+		return models.Recipe{}, fmt.Errorf("recipe %s has no family id", targetID)
+	}
+	targetFamily := target.FamilyID.Hex()
 	if defaultCategory(source.Category) != defaultCategory(target.Category) {
 		return models.Recipe{}, ErrCategoryMismatch
 	}
-	for _, ingredient := range source.Ingredients {
-		if ingredient.RecipeRef != nil && ingredient.RecipeRef.Hex() == targetID {
-			return models.Recipe{}, ErrReferenceLoop
-		}
+	referencesFamily, err := s.db.RecipeReferencesFamily(ctx, recipeID, targetFamily)
+	if err != nil {
+		return models.Recipe{}, err
 	}
-	referencesSource, err := s.db.FamilyReferencesRecipe(ctx, targetID, recipeID)
+	if referencesFamily {
+		return models.Recipe{}, ErrReferenceLoop
+	}
+	referencesSource, err := s.db.FamilyReferencesRecipe(ctx, targetFamily, recipeID)
 	if err != nil {
 		return models.Recipe{}, err
 	}
 	if referencesSource {
 		return models.Recipe{}, ErrReferenceLoop
 	}
-	if err := s.db.SetVariationOf(ctx, recipeID, targetID); err != nil {
+	if err := s.db.SetFamilyID(ctx, recipeID, targetFamily); err != nil {
 		return models.Recipe{}, err
 	}
 	return s.Get(ctx, recipeID, "", "")
 }
 
-// DetachVariation clears recipeID's VariationOf, turning a variation back
-// into its own standalone root - the one way back once LinkVariation (or
-// submitting a variation at creation time) has joined a family. Admin only
-// (see handlers.AdminDetachRecipeVariation); irreversible from the app's own
-// UI once done, same as any other admin action here has no undo.
+// DetachVariation takes recipeID out of its family, making it standalone
+// again. Admin only (see handlers.AdminDetachRecipeVariation).
 func (s *Service) DetachVariation(ctx context.Context, recipeID string) (models.Recipe, error) {
 	if _, err := primitive.ObjectIDFromHex(recipeID); err != nil {
 		return models.Recipe{}, ErrNotFound
 	}
-	recipe, err := s.db.GetRecipeById(recipeID)
+	recipe, err := s.getRecipe(recipeID)
 	if err != nil {
-		if errors.Is(err, mongorepo.NotFoundError) {
-			return models.Recipe{}, ErrNotFound
-		}
 		return models.Recipe{}, err
 	}
-	if recipe.VariationOf == nil {
-		return models.Recipe{}, ErrNotVariation
+	if recipe.FamilyID == nil {
+		return models.Recipe{}, ErrNotInFamily
 	}
-	if err := s.db.PromoteRecipeToRoot(ctx, recipeID); err != nil {
+	familyID := recipe.FamilyID.Hex()
+	sizes, err := s.db.GetFamilySizes(ctx, []string{familyID})
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	if sizes[familyID] <= 1 {
+		return models.Recipe{}, ErrNotInFamily
+	}
+	if familyID != recipeID {
+		if err := s.db.SetFamilyID(ctx, recipeID, recipeID); err != nil {
+			return models.Recipe{}, err
+		}
+		return s.Get(ctx, recipeID, "", "")
+	}
+	// The family is keyed by recipeID's own id, which it keeps as a
+	// standalone recipe, so the rest of the family needs a new key.
+	newest, err := s.db.GetNewestFamilyMemberID(ctx, familyID, recipeID)
+	if err != nil {
+		return models.Recipe{}, err
+	}
+	if newest == nil {
+		return models.Recipe{}, ErrNotInFamily
+	}
+	if err := s.db.RekeyFamily(ctx, familyID, recipeID, newest.Hex()); err != nil {
 		return models.Recipe{}, err
 	}
 	return s.Get(ctx, recipeID, "", "")
+}
+
+// getRecipe is GetRecipeById with a missing recipe mapped to ErrNotFound.
+func (s *Service) getRecipe(id string) (models.Recipe, error) {
+	recipe, err := s.db.GetRecipeById(id)
+	if errors.Is(err, mongorepo.NotFoundError) {
+		return models.Recipe{}, ErrNotFound
+	}
+	return recipe, err
 }

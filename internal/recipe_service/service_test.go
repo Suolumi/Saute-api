@@ -36,27 +36,26 @@ type fakeStore struct {
 	deleteRecipeById              int
 	createRecipeFn                func(authorID string, infos *models.CreateRecipe) (models.Recipe, error)
 	replaceRecipeByIdFn           func(id string, recipe models.RecipeDB) (models.Recipe, error)
-	getOldestVariationIDFn        func(rootID string) (*primitive.ObjectID, error)
-	repointVariationsFn           func(oldRootID, newRootID string) error
-	promoteRecipeToRootFn         func(id string) error
-	getVariationCountsFn          func(rootIDs []string) (map[string]int64, error)
-	setVariationOfFn              func(recipeID, rootID string) error
 	repointRecipeReferencesFn     func(oldRootID, newRootID string) error
 	hasIncomingReferencesFn       func(recipeID string) (bool, error)
-	familyReferencesRecipeFn      func(familyRootID, targetID string) (bool, error)
+	familyReferencesRecipeFn      func(familyID, targetID string) (bool, error)
+	recipeReferencesFamilyFn      func(recipeID, familyID string) (bool, error)
 	getRecipeTitlesFn             func(ids []string) (map[string]string, error)
 	getUsersByIDsFn               func(ids []string) (map[string]models.UserView, error)
 	listRecipeTranslationStatesFn func() ([]models.RecipeTranslationState, error)
 	listTranslationOverridesFn    func(recipeID, locale string) ([]models.TranslationOverride, error)
 	deleteTranslationOverrideFn   func(id string) (models.TranslationOverride, error)
 	deleteOverridesByPrefixFn     func(recipeID, locale, prefix string) error
-	// callOrder records, in order, the names of RepointVariations/
-	// PromoteRecipeToRoot/DeleteRecipeById calls - used to assert promotion
-	// happens strictly before the delete.
+	// callOrder records, in order, the names of RepointRecipeReferences/
+	// DeleteRecipeById calls.
 	callOrder               []string
-	repointVariations       int
-	promoteRecipeToRoot     int
 	repointRecipeReferences int
+
+	// families maps recipe id -> family id for the family methods;
+	// familyOrder lists those recipe ids oldest first (see addFamily).
+	families        map[string]string
+	familyOrder     []string
+	familySizeCalls [][]string
 
 	listToolboxUnitsFn                      func() ([]models.ToolboxUnit, error)
 	getToolboxUnitByIdFn                    func(id string) (models.ToolboxUnit, error)
@@ -150,43 +149,69 @@ func (f *fakeStore) DeleteRecipeById(id string) (models.RecipeDB, error) {
 	return models.RecipeDB{}, nil
 }
 func (f *fakeStore) DeleteLocalizedRecipesByID(context.Context, string) error { return nil }
-func (f *fakeStore) GetOldestVariationID(_ context.Context, rootID string) (*primitive.ObjectID, error) {
-	if f.getOldestVariationIDFn != nil {
-		return f.getOldestVariationIDFn(rootID)
+
+// addFamily registers ids, oldest first, as members of familyID.
+func (f *fakeStore) addFamily(familyID string, ids ...string) {
+	if f.families == nil {
+		f.families = map[string]string{}
+	}
+	for _, id := range ids {
+		f.families[id] = familyID
+		f.familyOrder = append(f.familyOrder, id)
+	}
+}
+func (f *fakeStore) GetFamilySizes(_ context.Context, familyIDs []string) (map[string]int64, error) {
+	f.familySizeCalls = append(f.familySizeCalls, familyIDs)
+	sizes := map[string]int64{}
+	for _, familyID := range familyIDs {
+		for _, member := range f.familyOrder {
+			if f.families[member] == familyID {
+				sizes[familyID]++
+			}
+		}
+	}
+	return sizes, nil
+}
+func (f *fakeStore) GetNewestFamilyMemberID(_ context.Context, familyID, excludeID string) (*primitive.ObjectID, error) {
+	for i := len(f.familyOrder) - 1; i >= 0; i-- {
+		id := f.familyOrder[i]
+		if id != excludeID && f.families[id] == familyID {
+			objectID, err := primitive.ObjectIDFromHex(id)
+			return &objectID, err
+		}
 	}
 	return nil, nil
 }
-func (f *fakeStore) RepointVariations(_ context.Context, oldRootID, newRootID string) error {
-	f.repointVariations++
-	f.callOrder = append(f.callOrder, "RepointVariations")
-	if f.repointVariationsFn != nil {
-		return f.repointVariationsFn(oldRootID, newRootID)
+func (f *fakeStore) SetFamilyID(_ context.Context, recipeID, familyID string) error {
+	f.addFamilyMember(recipeID)
+	f.families[recipeID] = familyID
+	return nil
+}
+func (f *fakeStore) RekeyFamily(_ context.Context, familyID, excludeID, newFamilyID string) error {
+	for id, family := range f.families {
+		if family == familyID && id != excludeID {
+			f.families[id] = newFamilyID
+		}
 	}
 	return nil
 }
-func (f *fakeStore) PromoteRecipeToRoot(_ context.Context, id string) error {
-	f.promoteRecipeToRoot++
-	f.callOrder = append(f.callOrder, "PromoteRecipeToRoot")
-	if f.promoteRecipeToRootFn != nil {
-		return f.promoteRecipeToRootFn(id)
+func (f *fakeStore) addFamilyMember(id string) {
+	if f.families == nil {
+		f.families = map[string]string{}
 	}
-	return nil
-}
-func (f *fakeStore) GetVariationCounts(_ context.Context, rootIDs []string) (map[string]int64, error) {
-	if f.getVariationCountsFn != nil {
-		return f.getVariationCountsFn(rootIDs)
+	if _, ok := f.families[id]; !ok {
+		f.familyOrder = append(f.familyOrder, id)
 	}
-	return map[string]int64{}, nil
 }
-func (f *fakeStore) SetVariationOf(_ context.Context, recipeID, rootID string) error {
-	if f.setVariationOfFn != nil {
-		return f.setVariationOfFn(recipeID, rootID)
+func (f *fakeStore) RecipeReferencesFamily(_ context.Context, recipeID, familyID string) (bool, error) {
+	if f.recipeReferencesFamilyFn != nil {
+		return f.recipeReferencesFamilyFn(recipeID, familyID)
 	}
-	return nil
+	return false, nil
 }
-func (f *fakeStore) FamilyReferencesRecipe(_ context.Context, familyRootID, targetID string) (bool, error) {
+func (f *fakeStore) FamilyReferencesRecipe(_ context.Context, familyID, targetID string) (bool, error) {
 	if f.familyReferencesRecipeFn != nil {
-		return f.familyReferencesRecipeFn(familyRootID, targetID)
+		return f.familyReferencesRecipeFn(familyID, targetID)
 	}
 	return false, nil
 }
@@ -789,8 +814,8 @@ func TestListBoostedMergesFavoritedFirstAndDecorates(t *testing.T) {
 			if userID != "user-1" {
 				t.Fatalf("GetRecipeDocumentsBoosted userID = %q, want user-1", userID)
 			}
-			return []models.Recipe{{Id: &favoritedID, Title: "Favorited"}},
-				[]models.Recipe{{Id: &restID, Title: "Rest"}}, 5, nil
+			return []models.Recipe{{Id: &favoritedID, FamilyID: &favoritedID, Title: "Favorited"}},
+				[]models.Recipe{{Id: &restID, FamilyID: &restID, Title: "Rest"}}, 5, nil
 		},
 		getFamilyFavoriteInfoFn: func(rootIDs []string, userID string) (map[string]models.FavoriteInfo, error) {
 			return map[string]models.FavoriteInfo{
@@ -1206,60 +1231,70 @@ func validCreateRecipe() models.CreateRecipe {
 	}
 }
 
-func TestCreateResolvesVariationRoot(t *testing.T) {
-	targetID := ptrObjectID()
-	target := models.Recipe{Id: targetID, Author: &models.UserView{Id: ptrObjectID()}}
-	var stored models.CreateRecipe
-	store := &fakeStore{
-		getRecipeByIdFn: func(id string) (models.Recipe, error) {
-			if id != targetID.Hex() {
-				t.Fatalf("GetRecipeById called with %q, want %q", id, targetID.Hex())
+// recipeLookup serves recipes by id, with FamilyID read from store.families
+// at fetch time so it reflects any family change the service made.
+func recipeLookup(store *fakeStore, recipes ...models.Recipe) func(string) (models.Recipe, error) {
+	return func(id string) (models.Recipe, error) {
+		for _, recipe := range recipes {
+			if recipe.Id.Hex() != id {
+				continue
 			}
-			return target, nil
-		},
-		createRecipeFn: func(_ string, infos *models.CreateRecipe) (models.Recipe, error) {
-			stored = *infos
-			return models.Recipe{Id: ptrObjectID(), SourceHash: infos.SourceHash}, nil
-		},
-	}
-	s := &Service{db: store, imageDir: t.TempDir(), maxPictureBytes: 10 << 20}
-
-	input := validCreateRecipe()
-	input.VariationOf = targetID
-	if _, err := s.Create(context.Background(), "author-1", input, nil, nil); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if stored.VariationOf == nil || stored.VariationOf.Hex() != targetID.Hex() {
-		t.Fatalf("stored.VariationOf = %v, want %v", stored.VariationOf, targetID)
+			if family, ok := store.families[id]; ok {
+				familyID, _ := primitive.ObjectIDFromHex(family)
+				recipe.FamilyID = &familyID
+			}
+			return recipe, nil
+		}
+		return models.Recipe{}, mongorepo.NotFoundError
 	}
 }
 
-func TestCreateFlattensVariationOfVariation(t *testing.T) {
-	rootID := ptrObjectID()
-	targetID := ptrObjectID()
-	// target is itself a variation of rootID.
-	target := models.Recipe{Id: targetID, VariationOf: rootID, Author: &models.UserView{Id: ptrObjectID()}}
+// familyOfThree registers A, B, C (oldest first) as one family keyed by A.
+func familyOfThree(store *fakeStore) (a, b, c models.Recipe) {
+	a = models.Recipe{Id: ptrObjectID(), Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
+	b = models.Recipe{Id: ptrObjectID(), Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
+	c = models.Recipe{Id: ptrObjectID(), Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
+	store.addFamily(a.Id.Hex(), a.Id.Hex(), b.Id.Hex(), c.Id.Hex())
+	return a, b, c
+}
+
+func assertFamilies(t *testing.T, store *fakeStore, want map[string]string) {
+	t.Helper()
+	for id, family := range want {
+		if store.families[id] != family {
+			t.Fatalf("family of %s = %s, want %s (families = %v)", id, store.families[id], family, store.families)
+		}
+	}
+}
+
+func noFavorites(store *fakeStore) {
+	store.getFavoriteInfoFn = func([]string, string) (map[string]models.FavoriteInfo, error) {
+		return map[string]models.FavoriteInfo{}, nil
+	}
+}
+
+func TestCreateJoinsTargetFamily(t *testing.T) {
+	store := &fakeStore{}
+	_, b, _ := familyOfThree(store)
 	var stored models.CreateRecipe
-	store := &fakeStore{
-		getRecipeByIdFn: func(string) (models.Recipe, error) { return target, nil },
-		createRecipeFn: func(_ string, infos *models.CreateRecipe) (models.Recipe, error) {
-			stored = *infos
-			return models.Recipe{Id: ptrObjectID(), SourceHash: infos.SourceHash}, nil
-		},
+	store.getRecipeByIdFn = recipeLookup(store, b)
+	store.createRecipeFn = func(_ string, infos *models.CreateRecipe) (models.Recipe, error) {
+		stored = *infos
+		return models.Recipe{Id: ptrObjectID(), SourceHash: infos.SourceHash}, nil
 	}
 	s := &Service{db: store, imageDir: t.TempDir(), maxPictureBytes: 10 << 20}
 
 	input := validCreateRecipe()
-	input.VariationOf = targetID
+	input.VariationOf = b.Id
 	if _, err := s.Create(context.Background(), "author-1", input, nil, nil); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if stored.VariationOf == nil || stored.VariationOf.Hex() != rootID.Hex() {
-		t.Fatalf("stored.VariationOf = %v, want flattened root %v, not the intermediate variation", stored.VariationOf, rootID)
+	if stored.FamilyID == nil || stored.FamilyID.Hex() != store.families[b.Id.Hex()] {
+		t.Fatalf("stored.FamilyID = %v, want the target's family %s", stored.FamilyID, store.families[b.Id.Hex()])
 	}
 }
 
-func TestCreateVariationOfMissingTargetReturnsNotFound(t *testing.T) {
+func TestCreateVersionOfMissingTargetReturnsNotFound(t *testing.T) {
 	store := &fakeStore{
 		getRecipeByIdFn: func(string) (models.Recipe, error) { return models.Recipe{}, mongorepo.NotFoundError },
 	}
@@ -1273,9 +1308,9 @@ func TestCreateVariationOfMissingTargetReturnsNotFound(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsVariationCategoryMismatch(t *testing.T) {
+func TestCreateRejectsVersionCategoryMismatch(t *testing.T) {
 	targetID := ptrObjectID()
-	target := models.Recipe{Id: targetID, Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
+	target := models.Recipe{Id: targetID, FamilyID: targetID, Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
 	store := &fakeStore{
 		getRecipeByIdFn: func(string) (models.Recipe, error) { return target, nil },
 	}
@@ -1290,9 +1325,9 @@ func TestCreateRejectsVariationCategoryMismatch(t *testing.T) {
 	}
 }
 
-func TestCreateAllowsVariationCategoryMatch(t *testing.T) {
+func TestCreateAllowsVersionCategoryMatch(t *testing.T) {
 	targetID := ptrObjectID()
-	target := models.Recipe{Id: targetID, Category: models.Diy, Author: &models.UserView{Id: ptrObjectID()}}
+	target := models.Recipe{Id: targetID, FamilyID: targetID, Category: models.Diy, Author: &models.UserView{Id: ptrObjectID()}}
 	var stored models.CreateRecipe
 	store := &fakeStore{
 		getRecipeByIdFn: func(string) (models.Recipe, error) { return target, nil },
@@ -1314,8 +1349,9 @@ func TestCreateAllowsVariationCategoryMatch(t *testing.T) {
 	}
 }
 
-func TestUpdateRejectsVariationCategoryMismatch(t *testing.T) {
-	rootID := ptrObjectID()
+func TestUpdateRejectsVersionCategoryMismatch(t *testing.T) {
+	store := &fakeStore{}
+	a := models.Recipe{Id: ptrObjectID(), Category: models.Food}
 	recipe := canonicalRecipe()
 	recipe.Author = &models.UserView{Id: ptrObjectID()}
 	recipe.Quantity = 1
@@ -1323,12 +1359,9 @@ func TestUpdateRejectsVariationCategoryMismatch(t *testing.T) {
 	recipe.Category = models.Food
 	recipe.Ingredients = []models.Ingredient{{Name: "Flour"}}
 	recipe.Steps = []models.Step{{Description: "Mix"}}
-	recipe.VariationOf = rootID
-	store := &fakeStore{
-		getRecipeByIdFn: func(string) (models.Recipe, error) {
-			return models.Recipe{Id: rootID, Category: models.Food}, nil
-		},
-	}
+	recipe.FamilyID = a.Id
+	store.addFamily(a.Id.Hex(), a.Id.Hex(), recipe.Id.Hex())
+	store.getRecipeByIdFn = recipeLookup(store, a)
 	s := &Service{db: store, imageDir: t.TempDir(), maxPictureBytes: 10 << 20}
 
 	diy := models.Diy
@@ -1339,188 +1372,113 @@ func TestUpdateRejectsVariationCategoryMismatch(t *testing.T) {
 	}
 }
 
-func TestSourceHashIgnoresVariationOf(t *testing.T) {
+func TestSourceHashIgnoresFamilyID(t *testing.T) {
 	base := validRecipeDB(nil)
 	base.Ingredients = []models.Ingredient{{Name: "Flour"}}
-	withVariation := base
-	withVariation.VariationOf = ptrObjectID()
+	withFamily := base
+	withFamily.FamilyID = ptrObjectID()
 
-	if sourceHash(base) != sourceHash(withVariation) {
-		t.Fatal("sourceHash differs based on VariationOf alone, want it to depend only on content")
+	if sourceHash(base) != sourceHash(withFamily) {
+		t.Fatal("sourceHash differs based on FamilyID alone, want it to depend only on content")
 	}
 }
 
-func TestDeleteWithNoVariationsSkipsPromotion(t *testing.T) {
-	id := primitive.NewObjectID().Hex()
-	store := &fakeStore{
-		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
-			return map[string]models.FavoriteInfo{}, nil
-		},
+func TestDeleteRepointsRefsToNewestRemaining(t *testing.T) {
+	store := &fakeStore{}
+	noFavorites(store)
+	a, b, c := familyOfThree(store)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c)
+	store.hasIncomingReferencesFn = func(id string) (bool, error) { return id == b.Id.Hex(), nil }
+	store.repointRecipeReferencesFn = func(oldID, newID string) error {
+		if oldID != b.Id.Hex() || newID != c.Id.Hex() {
+			t.Fatalf("RepointRecipeReferences(%s, %s), want (%s, %s)", oldID, newID, b.Id.Hex(), c.Id.Hex())
+		}
+		return nil
 	}
 	s := &Service{db: store}
 
-	if _, err := s.Delete(context.Background(), id); err != nil {
+	if _, err := s.Delete(context.Background(), b.Id.Hex()); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if store.repointVariations != 0 || store.promoteRecipeToRoot != 0 {
-		t.Fatalf("promotion calls = repoint:%d promote:%d, want 0/0", store.repointVariations, store.promoteRecipeToRoot)
-	}
-	if store.deleteRecipeById != 1 {
-		t.Fatalf("DeleteRecipeById called %d times, want 1", store.deleteRecipeById)
-	}
-}
-
-func TestDeletePromotesOldestVariationBeforeDeletingRoot(t *testing.T) {
-	rootID := primitive.NewObjectID().Hex()
-	oldestVariation := ptrObjectID()
-	store := &fakeStore{
-		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
-			return map[string]models.FavoriteInfo{}, nil
-		},
-		getOldestVariationIDFn: func(gotRootID string) (*primitive.ObjectID, error) {
-			if gotRootID != rootID {
-				t.Fatalf("GetOldestVariationID called with %q, want %q", gotRootID, rootID)
-			}
-			return oldestVariation, nil
-		},
-		repointVariationsFn: func(oldRootID, newRootID string) error {
-			if oldRootID != rootID || newRootID != oldestVariation.Hex() {
-				t.Fatalf("RepointVariations(%q, %q), want (%q, %q)", oldRootID, newRootID, rootID, oldestVariation.Hex())
-			}
-			return nil
-		},
-		promoteRecipeToRootFn: func(id string) error {
-			if id != oldestVariation.Hex() {
-				t.Fatalf("PromoteRecipeToRoot(%q), want %q", id, oldestVariation.Hex())
-			}
-			return nil
-		},
-		repointRecipeReferencesFn: func(oldRootID, newRootID string) error {
-			if oldRootID != rootID || newRootID != oldestVariation.Hex() {
-				t.Fatalf("RepointRecipeReferences(%q, %q), want (%q, %q)", oldRootID, newRootID, rootID, oldestVariation.Hex())
-			}
-			return nil
-		},
-		hasIncomingReferencesFn: func(string) (bool, error) {
-			t.Fatal("HasIncomingReferences should not be called when a variation is promoted in the root's place")
-			return false, nil
-		},
-	}
-	s := &Service{db: store}
-
-	if _, err := s.Delete(context.Background(), rootID); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	if store.repointVariations != 1 || store.promoteRecipeToRoot != 1 || store.repointRecipeReferences != 1 || store.deleteRecipeById != 1 {
-		t.Fatalf("call counts = repoint:%d promote:%d repointRefs:%d delete:%d, want 1/1/1/1", store.repointVariations, store.promoteRecipeToRoot, store.repointRecipeReferences, store.deleteRecipeById)
-	}
-	want := []string{"RepointVariations", "PromoteRecipeToRoot", "RepointRecipeReferences", "DeleteRecipeById"}
-	if len(store.callOrder) != len(want) {
+	want := []string{"RepointRecipeReferences", "DeleteRecipeById"}
+	if !reflect.DeepEqual(store.callOrder, want) {
 		t.Fatalf("callOrder = %v, want %v", store.callOrder, want)
 	}
-	for i, name := range want {
-		if store.callOrder[i] != name {
-			t.Fatalf("callOrder = %v, want %v", store.callOrder, want)
-		}
-	}
 }
 
-func TestDeleteStillBlockedByFavoritesEvenWithVariations(t *testing.T) {
-	id := primitive.NewObjectID().Hex()
-	store := &fakeStore{
-		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
-			return map[string]models.FavoriteInfo{id: {Count: 1}}, nil
-		},
-		getOldestVariationIDFn: func(string) (*primitive.ObjectID, error) {
-			t.Fatal("GetOldestVariationID should not be called when the favorites guard already blocks the delete")
-			return nil, nil
-		},
-	}
+func TestDeleteBlockedWhenReferencedAndAlone(t *testing.T) {
+	store := &fakeStore{}
+	noFavorites(store)
+	a := models.Recipe{Id: ptrObjectID()}
+	store.addFamily(a.Id.Hex(), a.Id.Hex())
+	store.getRecipeByIdFn = recipeLookup(store, a)
+	store.hasIncomingReferencesFn = func(string) (bool, error) { return true, nil }
 	s := &Service{db: store}
 
-	if _, err := s.Delete(context.Background(), id); !errors.Is(err, ErrHasFavorites) {
-		t.Fatalf("Delete err = %v, want ErrHasFavorites", err)
-	}
-	if store.repointVariations != 0 || store.promoteRecipeToRoot != 0 {
-		t.Fatalf("promotion calls = repoint:%d promote:%d, want 0/0", store.repointVariations, store.promoteRecipeToRoot)
-	}
-}
-
-func TestDeleteBlockedWhenReferencedWithNoVariationToPromote(t *testing.T) {
-	id := primitive.NewObjectID().Hex()
-	store := &fakeStore{
-		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
-			return map[string]models.FavoriteInfo{}, nil
-		},
-		hasIncomingReferencesFn: func(gotID string) (bool, error) {
-			if gotID != id {
-				t.Fatalf("HasIncomingReferences called with %q, want %q", gotID, id)
-			}
-			return true, nil
-		},
-	}
-	s := &Service{db: store}
-
-	if _, err := s.Delete(context.Background(), id); !errors.Is(err, ErrRecipeReferenced) {
+	if _, err := s.Delete(context.Background(), a.Id.Hex()); !errors.Is(err, ErrRecipeReferenced) {
 		t.Fatalf("Delete err = %v, want ErrRecipeReferenced", err)
 	}
-	if store.deleteRecipeById != 0 {
-		t.Fatalf("DeleteRecipeById called %d times, want 0", store.deleteRecipeById)
+	if store.deleteRecipeById != 0 || store.repointRecipeReferences != 0 {
+		t.Fatalf("delete:%d repoint:%d, want 0/0", store.deleteRecipeById, store.repointRecipeReferences)
+	}
+}
+
+func TestDeleteStillBlockedByFavorites(t *testing.T) {
+	store := &fakeStore{}
+	_, b, _ := familyOfThree(store)
+	store.getFavoriteInfoFn = func([]string, string) (map[string]models.FavoriteInfo, error) {
+		return map[string]models.FavoriteInfo{b.Id.Hex(): {Count: 1}}, nil
+	}
+	store.hasIncomingReferencesFn = func(string) (bool, error) {
+		t.Fatal("HasIncomingReferences should not be called when the favorites guard already blocks the delete")
+		return false, nil
+	}
+	s := &Service{db: store}
+
+	if _, err := s.Delete(context.Background(), b.Id.Hex()); !errors.Is(err, ErrHasFavorites) {
+		t.Fatalf("Delete err = %v, want ErrHasFavorites", err)
+	}
+	if store.deleteRecipeById != 0 || store.repointRecipeReferences != 0 {
+		t.Fatalf("delete:%d repoint:%d, want 0/0", store.deleteRecipeById, store.repointRecipeReferences)
 	}
 }
 
 func TestDeleteAllowedWhenNotReferenced(t *testing.T) {
-	id := primitive.NewObjectID().Hex()
-	store := &fakeStore{
-		getFavoriteInfoFn: func(ids []string, userID string) (map[string]models.FavoriteInfo, error) {
-			return map[string]models.FavoriteInfo{}, nil
-		},
-		hasIncomingReferencesFn: func(string) (bool, error) { return false, nil },
-	}
+	store := &fakeStore{}
+	noFavorites(store)
+	_, b, _ := familyOfThree(store)
+	store.hasIncomingReferencesFn = func(string) (bool, error) { return false, nil }
 	s := &Service{db: store}
 
-	if _, err := s.Delete(context.Background(), id); err != nil {
+	if _, err := s.Delete(context.Background(), b.Id.Hex()); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if store.deleteRecipeById != 1 {
-		t.Fatalf("DeleteRecipeById called %d times, want 1", store.deleteRecipeById)
+	if store.deleteRecipeById != 1 || store.repointRecipeReferences != 0 {
+		t.Fatalf("delete:%d repoint:%d, want 1/0", store.deleteRecipeById, store.repointRecipeReferences)
 	}
 }
 
-func TestLinkVariationSuccess(t *testing.T) {
-	sourceID := ptrObjectID()
-	targetID := ptrObjectID()
-	source := models.Recipe{Id: sourceID, Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
-	target := models.Recipe{Id: targetID, Category: models.Food, Author: &models.UserView{Id: ptrObjectID()}}
-	var setCalledWith [2]string
-	store := &fakeStore{
-		getRecipeByIdFn: func(id string) (models.Recipe, error) {
-			switch id {
-			case sourceID.Hex():
-				return source, nil
-			case targetID.Hex():
-				return target, nil
-			default:
-				t.Fatalf("GetRecipeById called with unexpected id %q", id)
-				return models.Recipe{}, nil
-			}
-		},
-		setVariationOfFn: func(recipeID, rootID string) error {
-			setCalledWith = [2]string{recipeID, rootID}
-			return nil
-		},
-	}
+// standaloneSource registers a standalone recipe (its own family) in store.
+func standaloneSource(store *fakeStore, category models.RecipeCategory) models.Recipe {
+	source := models.Recipe{Id: ptrObjectID(), Category: category, Author: &models.UserView{Id: ptrObjectID()}}
+	store.addFamily(source.Id.Hex(), source.Id.Hex())
+	return source
+}
+
+func TestLinkVersionSuccess(t *testing.T) {
+	store := &fakeStore{}
+	a, b, c := familyOfThree(store)
+	source := standaloneSource(store, models.Food)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c, source)
 	s := &Service{db: store}
 
-	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); err != nil {
+	if _, err := s.LinkVariation(context.Background(), source.Id.Hex(), b.Id.Hex()); err != nil {
 		t.Fatalf("LinkVariation: %v", err)
 	}
-	if setCalledWith != [2]string{sourceID.Hex(), targetID.Hex()} {
-		t.Fatalf("SetVariationOf called with %v, want [%s %s]", setCalledWith, sourceID.Hex(), targetID.Hex())
-	}
+	assertFamilies(t, store, map[string]string{source.Id.Hex(): a.Id.Hex(), b.Id.Hex(): a.Id.Hex()})
 }
 
-func TestLinkVariationRejectsSameRecipe(t *testing.T) {
+func TestLinkVersionRejectsSameRecipe(t *testing.T) {
 	id := primitive.NewObjectID().Hex()
 	s := &Service{db: &fakeStore{}}
 	if _, err := s.LinkVariation(context.Background(), id, id); !errors.Is(err, ErrInvalid) {
@@ -1528,151 +1486,137 @@ func TestLinkVariationRejectsSameRecipe(t *testing.T) {
 	}
 }
 
-func TestLinkVariationRejectsSourceAlreadyVariation(t *testing.T) {
-	sourceID := ptrObjectID()
-	targetID := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(string) (models.Recipe, error) {
-			return models.Recipe{Id: sourceID, VariationOf: ptrObjectID()}, nil
-		},
-	}
+func TestLinkVersionRejectsSourceInFamily(t *testing.T) {
+	store := &fakeStore{}
+	a, b, c := familyOfThree(store)
+	target := standaloneSource(store, models.Food)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c, target)
 	s := &Service{db: store}
-	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrAlreadyVariation) {
-		t.Fatalf("LinkVariation err = %v, want ErrAlreadyVariation", err)
+
+	if _, err := s.LinkVariation(context.Background(), a.Id.Hex(), target.Id.Hex()); !errors.Is(err, ErrAlreadyInFamily) {
+		t.Fatalf("LinkVariation err = %v, want ErrAlreadyInFamily", err)
+	}
+	assertFamilies(t, store, map[string]string{a.Id.Hex(): a.Id.Hex()})
+}
+
+func TestLinkVersionMissingTargetReturnsNotFound(t *testing.T) {
+	store := &fakeStore{}
+	source := standaloneSource(store, models.Food)
+	store.getRecipeByIdFn = recipeLookup(store, source)
+	s := &Service{db: store}
+
+	if _, err := s.LinkVariation(context.Background(), source.Id.Hex(), primitive.NewObjectID().Hex()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LinkVariation err = %v, want ErrNotFound", err)
 	}
 }
 
-func TestLinkVariationRejectsSourceWithOwnVariations(t *testing.T) {
-	sourceID := ptrObjectID()
-	targetID := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(string) (models.Recipe, error) { return models.Recipe{Id: sourceID}, nil },
-		getVariationCountsFn: func(rootIDs []string) (map[string]int64, error) {
-			return map[string]int64{sourceID.Hex(): 2}, nil
-		},
-	}
+func TestLinkVersionRejectsCategoryMismatch(t *testing.T) {
+	store := &fakeStore{}
+	a, b, c := familyOfThree(store)
+	source := standaloneSource(store, models.Diy)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c, source)
 	s := &Service{db: store}
-	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrRecipeHasVariations) {
-		t.Fatalf("LinkVariation err = %v, want ErrRecipeHasVariations", err)
-	}
-}
 
-func TestLinkVariationRejectsTargetIsVariation(t *testing.T) {
-	sourceID := ptrObjectID()
-	targetID := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(id string) (models.Recipe, error) {
-			if id == sourceID.Hex() {
-				return models.Recipe{Id: sourceID}, nil
-			}
-			return models.Recipe{Id: targetID, VariationOf: ptrObjectID()}, nil
-		},
-	}
-	s := &Service{db: store}
-	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrTargetIsVariation) {
-		t.Fatalf("LinkVariation err = %v, want ErrTargetIsVariation", err)
-	}
-}
-
-func TestLinkVariationRejectsCategoryMismatch(t *testing.T) {
-	sourceID := ptrObjectID()
-	targetID := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(id string) (models.Recipe, error) {
-			if id == sourceID.Hex() {
-				return models.Recipe{Id: sourceID, Category: models.Food}, nil
-			}
-			return models.Recipe{Id: targetID, Category: models.Diy}, nil
-		},
-	}
-	s := &Service{db: store}
-	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrCategoryMismatch) {
+	if _, err := s.LinkVariation(context.Background(), source.Id.Hex(), b.Id.Hex()); !errors.Is(err, ErrCategoryMismatch) {
 		t.Fatalf("LinkVariation err = %v, want ErrCategoryMismatch", err)
 	}
+	assertFamilies(t, store, map[string]string{source.Id.Hex(): source.Id.Hex()})
 }
 
-func TestLinkVariationRejectsWhenSourceReferencesTarget(t *testing.T) {
-	sourceID := ptrObjectID()
-	targetID := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(id string) (models.Recipe, error) {
-			if id == sourceID.Hex() {
-				return models.Recipe{Id: sourceID, Ingredients: []models.Ingredient{{RecipeRef: targetID}}}, nil
-			}
-			return models.Recipe{Id: targetID}, nil
-		},
+func TestLinkVersionRejectsWhenSourceReferencesFamily(t *testing.T) {
+	store := &fakeStore{}
+	a, b, c := familyOfThree(store)
+	source := standaloneSource(store, models.Food)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c, source)
+	store.recipeReferencesFamilyFn = func(recipeID, familyID string) (bool, error) {
+		return recipeID == source.Id.Hex() && familyID == a.Id.Hex(), nil
 	}
 	s := &Service{db: store}
-	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrReferenceLoop) {
+
+	if _, err := s.LinkVariation(context.Background(), source.Id.Hex(), b.Id.Hex()); !errors.Is(err, ErrReferenceLoop) {
 		t.Fatalf("LinkVariation err = %v, want ErrReferenceLoop", err)
 	}
+	assertFamilies(t, store, map[string]string{source.Id.Hex(): source.Id.Hex()})
 }
 
-func TestLinkVariationRejectsWhenTargetFamilyReferencesSource(t *testing.T) {
-	sourceID := ptrObjectID()
-	targetID := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(id string) (models.Recipe, error) {
-			if id == sourceID.Hex() {
-				return models.Recipe{Id: sourceID}, nil
-			}
-			return models.Recipe{Id: targetID}, nil
-		},
-		familyReferencesRecipeFn: func(familyRootID, targetID string) (bool, error) { return true, nil },
+func TestLinkVersionRejectsWhenTargetFamilyReferencesSource(t *testing.T) {
+	store := &fakeStore{}
+	a, b, c := familyOfThree(store)
+	source := standaloneSource(store, models.Food)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c, source)
+	store.familyReferencesRecipeFn = func(familyID, targetID string) (bool, error) {
+		return familyID == a.Id.Hex() && targetID == source.Id.Hex(), nil
 	}
 	s := &Service{db: store}
-	if _, err := s.LinkVariation(context.Background(), sourceID.Hex(), targetID.Hex()); !errors.Is(err, ErrReferenceLoop) {
+
+	if _, err := s.LinkVariation(context.Background(), source.Id.Hex(), b.Id.Hex()); !errors.Is(err, ErrReferenceLoop) {
 		t.Fatalf("LinkVariation err = %v, want ErrReferenceLoop", err)
 	}
+	assertFamilies(t, store, map[string]string{source.Id.Hex(): source.Id.Hex()})
 }
 
-func TestDetachVariationSuccess(t *testing.T) {
-	id := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(string) (models.Recipe, error) { return models.Recipe{Id: id, VariationOf: ptrObjectID()}, nil },
-	}
+func TestDetachVersionSetsOwnFamilyID(t *testing.T) {
+	store := &fakeStore{}
+	a, b, c := familyOfThree(store)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c)
 	s := &Service{db: store}
-	if _, err := s.DetachVariation(context.Background(), id.Hex()); err != nil {
+
+	got, err := s.DetachVariation(context.Background(), b.Id.Hex())
+	if err != nil {
 		t.Fatalf("DetachVariation: %v", err)
 	}
-	if store.promoteRecipeToRoot != 1 {
-		t.Fatalf("PromoteRecipeToRoot called %d times, want 1", store.promoteRecipeToRoot)
+	assertFamilies(t, store, map[string]string{a.Id.Hex(): a.Id.Hex(), b.Id.Hex(): b.Id.Hex(), c.Id.Hex(): a.Id.Hex()})
+	if got.FamilySize != 1 {
+		t.Fatalf("detached FamilySize = %d, want 1", got.FamilySize)
 	}
 }
 
-func TestDetachVariationRejectsNonVariation(t *testing.T) {
-	id := ptrObjectID()
-	store := &fakeStore{
-		getRecipeByIdFn: func(string) (models.Recipe, error) { return models.Recipe{Id: id}, nil },
-	}
+func TestDetachVersionRekeysFamilyWhenKeyIsOwnID(t *testing.T) {
+	store := &fakeStore{}
+	a, b, c := familyOfThree(store)
+	store.getRecipeByIdFn = recipeLookup(store, a, b, c)
 	s := &Service{db: store}
-	if _, err := s.DetachVariation(context.Background(), id.Hex()); !errors.Is(err, ErrNotVariation) {
-		t.Fatalf("DetachVariation err = %v, want ErrNotVariation", err)
+
+	if _, err := s.DetachVariation(context.Background(), a.Id.Hex()); err != nil {
+		t.Fatalf("DetachVariation: %v", err)
 	}
-	if store.promoteRecipeToRoot != 0 {
-		t.Fatalf("PromoteRecipeToRoot called %d times, want 0", store.promoteRecipeToRoot)
+	assertFamilies(t, store, map[string]string{a.Id.Hex(): a.Id.Hex(), b.Id.Hex(): c.Id.Hex(), c.Id.Hex(): c.Id.Hex()})
+}
+
+func TestDetachVersionRejectsStandalone(t *testing.T) {
+	store := &fakeStore{}
+	source := standaloneSource(store, models.Food)
+	store.getRecipeByIdFn = recipeLookup(store, source)
+	s := &Service{db: store}
+
+	if _, err := s.DetachVariation(context.Background(), source.Id.Hex()); !errors.Is(err, ErrNotInFamily) {
+		t.Fatalf("DetachVariation err = %v, want ErrNotInFamily", err)
 	}
 }
 
-func TestGetDecoratesVariationCount(t *testing.T) {
+func TestGetLocalizedCarriesFamilyID(t *testing.T) {
+	store := &fakeStore{}
+	other := models.Recipe{Id: ptrObjectID()}
 	canonical := canonicalRecipe()
-	store := &fakeStore{
-		getRecipeByIdFn: func(string) (models.Recipe, error) { return canonical, nil },
-		getVariationCountsFn: func(ids []string) (map[string]int64, error) {
-			if len(ids) != 1 || ids[0] != canonical.Id.Hex() {
-				t.Fatalf("GetVariationCounts called with %v, want [%s]", ids, canonical.Id.Hex())
-			}
-			return map[string]int64{canonical.Id.Hex(): 2}, nil
-		},
+	store.addFamily(other.Id.Hex(), other.Id.Hex(), canonical.Id.Hex())
+	store.getRecipeByIdFn = recipeLookup(store, canonical)
+	store.getRecipeByIdLocaleFn = func(id, locale string) (models.Recipe, error) {
+		return models.Recipe{Id: canonical.Id, SourceHash: canonical.SourceHash, Title: "Crêpes"}, nil
 	}
 	s := &Service{db: store}
 
-	got, err := s.Get(context.Background(), canonical.Id.Hex(), "", "")
+	got, err := s.Get(context.Background(), canonical.Id.Hex(), "fr", "")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.VariationCount != 2 {
-		t.Fatalf("VariationCount = %d, want 2", got.VariationCount)
+	if got.Title != "Crêpes" {
+		t.Fatalf("Title = %q, want the stored translation", got.Title)
+	}
+	if got.FamilyID == nil || got.FamilyID.Hex() != other.Id.Hex() {
+		t.Fatalf("FamilyID = %v, want %s", got.FamilyID, other.Id.Hex())
+	}
+	if got.FamilySize != 2 {
+		t.Fatalf("FamilySize = %d, want 2", got.FamilySize)
 	}
 }
 
@@ -2082,16 +2026,12 @@ func TestListUsesPerRecipeFavoritesForFlat(t *testing.T) {
 }
 
 func TestListStampsFamilySize(t *testing.T) {
-	root, variation, standalone := ptrObjectID(), ptrObjectID(), ptrObjectID()
-	var calls [][]string
-	store := &fakeStore{
-		getRecipeDocumentsFn: func(models.GetRecipesRequest) ([]models.Recipe, int64, error) {
-			return []models.Recipe{{Id: root}, {Id: variation, VariationOf: root}, {Id: standalone}}, 3, nil
-		},
-		getVariationCountsFn: func(ids []string) (map[string]int64, error) {
-			calls = append(calls, ids)
-			return map[string]int64{root.Hex(): 2}, nil
-		},
+	store := &fakeStore{}
+	a, b, standalone := ptrObjectID(), ptrObjectID(), ptrObjectID()
+	store.addFamily(a.Hex(), a.Hex(), b.Hex(), ptrObjectID().Hex())
+	store.addFamily(standalone.Hex(), standalone.Hex())
+	store.getRecipeDocumentsFn = func(models.GetRecipesRequest) ([]models.Recipe, int64, error) {
+		return []models.Recipe{{Id: a, FamilyID: a}, {Id: b, FamilyID: a}, {Id: standalone, FamilyID: standalone}}, 3, nil
 	}
 	s := &Service{db: store}
 
@@ -2103,14 +2043,8 @@ func TestListStampsFamilySize(t *testing.T) {
 	if !reflect.DeepEqual(got, []int64{3, 3, 1}) {
 		t.Fatalf("family sizes = %v, want [3 3 1]", got)
 	}
-	for _, ids := range calls {
-		for _, id := range ids {
-			if id == variation.Hex() {
-				t.Fatalf("GetVariationCounts asked for a variation's own id: %v", ids)
-			}
-		}
-		if len(ids) > 2 {
-			t.Fatalf("GetVariationCounts ids not deduplicated: %v", ids)
-		}
+	want := [][]string{{a.Hex(), standalone.Hex()}}
+	if !reflect.DeepEqual(store.familySizeCalls, want) {
+		t.Fatalf("GetFamilySizes calls = %v, want %v (deduplicated family ids)", store.familySizeCalls, want)
 	}
 }

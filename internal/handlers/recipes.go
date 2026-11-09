@@ -42,18 +42,14 @@ func recipeServiceError(err error, c echo.Context) error {
 		return errorResponse(http.StatusNotFound, "Picture not found", nil, c)
 	case errors.Is(err, recipe_service.ErrForbidden):
 		return errorResponse(http.StatusForbidden, "Forbidden", nil, c)
-	case errors.Is(err, recipe_service.ErrAlreadyVariation):
-		return errorResponse(http.StatusUnprocessableEntity, "Recipe is already a variation", nil, c)
-	case errors.Is(err, recipe_service.ErrRecipeHasVariations):
-		return errorResponse(http.StatusConflict, "Recipe already has its own variations", nil, c)
-	case errors.Is(err, recipe_service.ErrTargetIsVariation):
-		return errorResponse(http.StatusUnprocessableEntity, "Target recipe is itself a variation", nil, c)
+	case errors.Is(err, recipe_service.ErrAlreadyInFamily):
+		return errorResponse(http.StatusUnprocessableEntity, "Recipe is already part of a family", nil, c)
 	case errors.Is(err, recipe_service.ErrCategoryMismatch):
 		return errorResponse(http.StatusUnprocessableEntity, "Recipe and target must share the same category", nil, c)
 	case errors.Is(err, recipe_service.ErrReferenceLoop):
 		return errorResponse(http.StatusConflict, "Linking would create a recipe that references its own family", nil, c)
-	case errors.Is(err, recipe_service.ErrNotVariation):
-		return errorResponse(http.StatusUnprocessableEntity, "Recipe is not a variation", nil, c)
+	case errors.Is(err, recipe_service.ErrNotInFamily):
+		return errorResponse(http.StatusUnprocessableEntity, "Recipe is not part of a family", nil, c)
 	case errors.Is(err, recipe_service.ErrSuggestionNotFound):
 		return errorResponse(http.StatusNotFound, "Translation suggestion not found", nil, c)
 	case errors.Is(err, recipe_service.ErrSuggestionAlreadyPending):
