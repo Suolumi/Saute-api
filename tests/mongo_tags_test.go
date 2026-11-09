@@ -21,19 +21,23 @@ func TestGetRecipeDocumentsTagFilter(t *testing.T) {
 		"author": author, "title": "Vegan Root", "ingredients": ingredients, "kind": "dish",
 		"tags": bson.A{"vegan", "vegetarian", "gluten-free"},
 	})
-	meatRoot := insertRecipeDoc(t, db, ctx, bson.M{
-		"author": author, "title": "Meat Root", "ingredients": ingredients, "kind": "dish",
+	meatFirst := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Meat First", "ingredients": ingredients, "kind": "dish",
 	})
-	veganVariation := insertRecipeDoc(t, db, ctx, bson.M{
-		"author": author, "title": "Vegan Twist", "variation_of": meatRoot, "ingredients": ingredients, "kind": "dish",
+	veganVersion := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Vegan Twist", "family_id": meatFirst, "ingredients": ingredients, "kind": "dish",
 		"tags": bson.A{"vegan", "vegetarian"},
 	})
-	// gluten-free on a sibling: no single recipe of this family is both.
-	splitRoot := insertRecipeDoc(t, db, ctx, bson.M{
-		"author": author, "title": "Split Root", "ingredients": ingredients, "kind": "dish", "tags": bson.A{"vegan"},
-	})
+	// A newer, untagged version: the vegan one still represents the family.
 	insertRecipeDoc(t, db, ctx, bson.M{
-		"author": author, "title": "Split GF", "variation_of": splitRoot, "ingredients": ingredients, "kind": "dish",
+		"author": author, "title": "Meat Second", "family_id": meatFirst, "ingredients": ingredients, "kind": "dish",
+	})
+	// gluten-free on a sibling: no single recipe of this family is both.
+	splitFirst := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Split First", "ingredients": ingredients, "kind": "dish", "tags": bson.A{"vegan"},
+	})
+	splitGF := insertRecipeDoc(t, db, ctx, bson.M{
+		"author": author, "title": "Split GF", "family_id": splitFirst, "ingredients": ingredients, "kind": "dish",
 		"tags": bson.A{"gluten-free"},
 	})
 
@@ -47,17 +51,12 @@ func TestGetRecipeDocumentsTagFilter(t *testing.T) {
 
 	vegan, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, Tags: []string{"vegan"}})
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{veganRoot.Hex(), meatRoot.Hex(), splitRoot.Hex()}, ids(vegan))
-	for _, recipe := range vegan {
-		switch recipe.Id.Hex() {
-		case meatRoot.Hex():
-			require.Len(t, recipe.TagMatches, 1, "only a variation matches, so the card gets a hint")
-			assert.Equal(t, veganVariation.Hex(), recipe.TagMatches[0].Id.Hex())
-			assert.Equal(t, "Vegan Twist", recipe.TagMatches[0].Title)
-		default:
-			assert.Empty(t, recipe.TagMatches, "the root itself matches")
-		}
-	}
+	assert.ElementsMatch(t, []string{veganRoot.Hex(), veganVersion.Hex(), splitFirst.Hex()}, ids(vegan),
+		"each family shows its newest version carrying the tag")
+
+	gf, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, Tags: []string{"gluten-free"}})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{veganRoot.Hex(), splitGF.Hex()}, ids(gf))
 
 	both, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, Tags: []string{"vegan", "gluten-free"}})
 	require.NoError(t, err)
@@ -65,7 +64,7 @@ func TestGetRecipeDocumentsTagFilter(t *testing.T) {
 
 	flat, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, OwnRecipes: true, Author: "tag-author", Tags: []string{"vegetarian"}})
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{veganRoot.Hex(), veganVariation.Hex()}, ids(flat))
+	assert.ElementsMatch(t, []string{veganRoot.Hex(), veganVersion.Hex()}, ids(flat))
 
 	injected, _, err := db.GetRecipeDocuments(models.GetRecipesRequest{Limit: 10, Tags: []string{"$title"}})
 	require.NoError(t, err)

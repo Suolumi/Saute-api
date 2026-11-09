@@ -109,12 +109,10 @@ func (c *Client) GetFavoriteInfo(ctx context.Context, ids []string, userID strin
 	return result, nil
 }
 
-// favoritedRecipeIDs returns the family root id for every recipe userID has
-// favorited, deduplicated - favoriting a variation still counts as favoriting
-// its family for boosting purposes (decision #6), so this resolves each
-// favorited recipe to its root (or itself, if it's already a root) rather
-// than returning the raw favorited ids.
-func (c *Client) favoritedRecipeIDs(ctx context.Context, userID string) ([]primitive.ObjectID, error) {
+// favoritedFamilyIDs returns the family_id of every recipe userID has
+// favorited, deduplicated: favoriting any version counts as favoriting its
+// family for boosting purposes.
+func (c *Client) favoritedFamilyIDs(ctx context.Context, userID string) ([]primitive.ObjectID, error) {
 	userObjectID, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
 		return nil, err
@@ -129,9 +127,9 @@ func (c *Client) favoritedRecipeIDs(ctx context.Context, userID string) ([]primi
 		}}},
 		bson.D{{Key: "$unwind", Value: "$recipeDoc"}},
 		bson.D{{Key: "$project", Value: bson.D{
-			{Key: "root", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$recipeDoc.variation_of", "$recipeDoc._id"}}}},
+			{Key: "family", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$recipeDoc.family_id", "$recipeDoc._id"}}}},
 		}}},
-		bson.D{{Key: "$group", Value: bson.D{{Key: "_id", Value: "$root"}}}},
+		bson.D{{Key: "$group", Value: bson.D{{Key: "_id", Value: "$family"}}}},
 	})
 	if err != nil {
 		return nil, err

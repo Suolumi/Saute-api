@@ -461,7 +461,7 @@ func (s *Server) search(ctx context.Context, req *mcp.CallToolRequest, input Sea
 	items, total, nextOffset, hasNext, err := s.recipes.Search(ctx, models.GetRecipesRequest{
 		Title: input.Title, Kind: input.Kind, Category: input.Category, Author: input.Author,
 		Ingredients: input.Ingredients, Tags: input.Tags, PreparationTime: input.PreparationTime, TotalTime: input.TotalTime,
-		VariationOf: input.VariationOf, Locale: input.Locale,
+		Family: input.VariationOf, Locale: input.Locale,
 	}, offset, limit)
 	if err != nil {
 		return nil, ListOutput{}, err

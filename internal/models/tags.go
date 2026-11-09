@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // TagGroup is one of the fixed groups a RecipeTag belongs to. The order of
@@ -60,13 +58,4 @@ type SaveRecipeTagResponse struct {
 
 type ListRecipeTagsResponse struct {
 	Items []RecipeTag `json:"items"`
-}
-
-// TagMatch is a variation that satisfies a tag filter its family root doesn't,
-// shown as a hint on the root's listing card.
-type TagMatch struct {
-	Id           *primitive.ObjectID `bson:"_id" json:"id"`
-	Title        string              `bson:"title" json:"title"`
-	SourceLocale string              `bson:"source_locale,omitempty" json:"-"`
-	SourceHash   string              `bson:"source_hash,omitempty" json:"-"`
 }

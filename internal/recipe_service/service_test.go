@@ -1975,7 +1975,7 @@ func TestListUsesPerRecipeFavoritesForOwnRecipes(t *testing.T) {
 	}
 }
 
-func TestListUsesPerRecipeFavoritesForVariationOf(t *testing.T) {
+func TestListUsesPerRecipeFavoritesForFamily(t *testing.T) {
 	id := ptrObjectID()
 	store := &fakeStore{
 		getRecipeDocumentsFn: func(models.GetRecipesRequest) ([]models.Recipe, int64, error) {
@@ -1985,13 +1985,13 @@ func TestListUsesPerRecipeFavoritesForVariationOf(t *testing.T) {
 			return map[string]models.FavoriteInfo{id.Hex(): {Count: 1, Favorited: true}}, nil
 		},
 		getFamilyFavoriteInfoFn: func([]string, string) (map[string]models.FavoriteInfo, error) {
-			t.Fatal("GetFamilyFavoriteInfo should not be called when listing a family's variations - each one shows its own exact favorite status")
+			t.Fatal("GetFamilyFavoriteInfo should not be called when listing a family's versions - each one shows its own exact favorite status")
 			return nil, nil
 		},
 	}
 	s := &Service{db: store}
 
-	previews, _, err := s.List(context.Background(), models.GetRecipesRequest{VariationOf: id.Hex()}, "user-1")
+	previews, _, err := s.List(context.Background(), models.GetRecipesRequest{Family: id.Hex()}, "user-1")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

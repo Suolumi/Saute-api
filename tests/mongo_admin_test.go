@@ -23,7 +23,7 @@ func TestAdminStatsCounts(t *testing.T) {
 	insertTestUser(t, db, ctx, "stats-non-admin")
 
 	foodRoot := insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Food Root", "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish", "category": "food"})
-	insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Food Variation", "variation_of": foodRoot, "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish", "category": "food"})
+	insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Food Variation", "family_id": foodRoot, "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish", "category": "food"})
 	insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "DIY Root", "ingredients": bson.A{bson.M{"name": "wax"}}, "category": "diy"})
 	// A legacy document predating the category field must still count as food.
 	insertRecipeDoc(t, db, ctx, bson.M{"author": author, "title": "Legacy Root", "ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish"})

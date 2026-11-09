@@ -80,8 +80,8 @@ type GetRecipesRequest struct {
 	// collapsed listing; when empty or "food", that listing excludes diy
 	// (see buildRecipeFilterPipeline - this is not a generic equality
 	// filter, existing recipes predate this field and must still show up
-	// under "food"). Ignored by variation_of listings (a variation always
-	// shares its root's category, so filtering is moot there). For
+	// under "food"). Ignored by family listings (every version shares the
+	// family's category, so filtering is moot there). For
 	// own_recipes listings, only an explicit "diy" narrows the results (to
 	// just DIY - the admin back-office's DIY moderation tab); left empty
 	// (Settings' own-recipes fetch, and the admin Recipes tab) it stays
@@ -90,9 +90,9 @@ type GetRecipesRequest struct {
 	Locale       string         `query:"locale,omitempty"`
 	SearchLocale string         `query:"search_locale,omitempty"`
 	Favorite     bool           `query:"favorite,omitempty"`
-	// VariationOf, when set, lists only the variations of that recipe id
-	// (never the root itself) instead of the default root-only listing.
-	VariationOf string `query:"variation_of,omitempty"`
+	// Family, when set, lists every recipe with that family_id, newest first,
+	// instead of the default family-collapsed listing.
+	Family string `query:"family,omitempty"`
 	// OwnRecipes switches List into "My Recipes" mode: every recipe matching
 	// Author is returned flatly (roots and variations alike, no collapsing),
 	// and favorite decoration is per-recipe instead of family-aggregate. Set
@@ -118,8 +118,8 @@ type GetRecipesRequest struct {
 	// FavoritesOnly is set, and drives the favorites $lookup in
 	// buildRecipeFilterPipeline.
 	FavoritedByUserID string `query:"-"`
-	// ExcludeFamily hides that recipe id from a listing - used by the "add
-	// recipe as ingredient" picker so a recipe can't offer itself as a
+	// ExcludeFamily hides every recipe with that family_id - used by the "add
+	// recipe as ingredient" picker so a recipe can't offer its own family as a
 	// reference target. UX nicety only; nothing enforces it on write.
 	ExcludeFamily string `query:"exclude_family,omitempty"`
 }
@@ -265,9 +265,6 @@ type Recipe struct {
 	SourceHash   string              `bson:"source_hash,omitempty" json:"-"`
 	VariationOf  *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
 	FamilyID     *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
-	// TagMatches is only set by a tag-filtered family listing; see
-	// RecipePreview.TagMatches.
-	TagMatches []TagMatch `bson:"tag_matches,omitempty" json:"-"`
 	// Favorite, FavoriteCount, FamilySize and PictureOutputs are stamped on
 	// after fetch (see recipe_service.decorateFavorite/decorateFamilySize/
 	// decoratePictureContributors); they never come from the recipe or
@@ -347,12 +344,9 @@ type RecipePreview struct {
 	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	VariationOf     *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
 	FamilyID        *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
-	// TagMatches lists the variations that satisfy a tag filter when the
-	// root itself doesn't, so the card can point to them.
-	TagMatches     []TagMatch `bson:"-" json:"tag_matches,omitempty"`
-	Favorite       bool       `bson:"-" json:"favorite"`
-	FavoriteCount  int64      `bson:"-" json:"favorite_count"`
-	VariationCount int64      `bson:"-" json:"variation_count"`
+	Favorite        bool                `bson:"-" json:"favorite"`
+	FavoriteCount   int64               `bson:"-" json:"favorite_count"`
+	VariationCount  int64               `bson:"-" json:"variation_count"`
 	// FamilySize counts every version in the preview's family; 1 for a
 	// standalone recipe.
 	FamilySize int64 `bson:"-" json:"family_size"`

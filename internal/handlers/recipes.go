@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"recipes/internal/jwt_manager"
 	"recipes/internal/models"
@@ -238,6 +239,14 @@ func (h *Handlers) GetRecipes(c echo.Context) error {
 	}
 	if body.Limit < 0 || body.Limit > 100 || body.Offset < 0 {
 		return errorResponse(http.StatusBadRequest, "limit must be between 0 and 100 and offset must not be negative", nil, c)
+	}
+	for name, value := range map[string]string{"family": body.Family, "exclude_family": body.ExcludeFamily} {
+		if value == "" {
+			continue
+		}
+		if _, err := primitive.ObjectIDFromHex(value); err != nil {
+			return errorResponse(http.StatusBadRequest, name+" must be a recipe family id", nil, c)
+		}
 	}
 	recipes, count, err := h.recipes.List(c.Request().Context(), body, h.optionalUserID(c))
 	if err != nil {

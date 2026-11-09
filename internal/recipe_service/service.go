@@ -1242,10 +1242,10 @@ func (s *Service) List(ctx context.Context, parameters models.GetRecipesRequest,
 	}
 
 	previews := s.localizePreviews(ctx, documents, parameters.Locale)
-	if parameters.OwnRecipes || parameters.FavoritesOnly || parameters.Flat || parameters.VariationOf != "" {
-		// "My Recipes"/"My Favorites" (decision #4) and a family's variation
-		// list (VariationOf - used by the recipe detail page's Variations
-		// section and the variation-picker modal): each entry's own exact
+	if parameters.OwnRecipes || parameters.FavoritesOnly || parameters.Flat || parameters.Family != "" {
+		// "My Recipes"/"My Favorites" (decision #4) and a family's version
+		// list (Family - used by the recipe page's version chips and the
+		// version-picker modal): each entry's own exact
 		// favorite status, not the family aggregate - only the
 		// family-collapsed discovery listing still aggregates by family.
 		s.decorateFavoritePreviews(ctx, previews, userID)
@@ -1383,28 +1383,6 @@ func (s *Service) localizeBatch(ctx context.Context, documents []models.Recipe, 
 	return localized
 }
 
-// localizeTagMatches swaps each tag-match hint's title for its stored
-// translation, the same way the variation itself would be served.
-func (s *Service) localizeTagMatches(ctx context.Context, previews []models.RecipePreview, requested string) {
-	var matches []models.Recipe
-	for _, preview := range previews {
-		for _, match := range preview.TagMatches {
-			matches = append(matches, models.Recipe{Id: match.Id, Title: match.Title, SourceLocale: match.SourceLocale, SourceHash: match.SourceHash})
-		}
-	}
-	if len(matches) == 0 {
-		return
-	}
-	localized := s.localizeBatch(ctx, matches, requested)
-	i := 0
-	for p := range previews {
-		for m := range previews[p].TagMatches {
-			previews[p].TagMatches[m].Title = localized[i].Title
-			i++
-		}
-	}
-}
-
 func (s *Service) localizePreviews(ctx context.Context, documents []models.Recipe, requested string) []models.RecipePreview {
 	localized := s.localizeBatch(ctx, documents, requested)
 	previews := make([]models.RecipePreview, 0, len(localized))
@@ -1413,11 +1391,10 @@ func (s *Service) localizePreviews(ctx context.Context, documents []models.Recip
 			Id: recipe.Id, Title: recipe.Title, Description: recipe.Description, Author: recipe.Author,
 			PreparationTime: recipe.PreparationTime, CookingTime: recipe.CookingTime, RestingTime: recipe.RestingTime,
 			Kind: recipe.Kind, Category: recipe.Category, Quantity: recipe.Quantity, Pictures: pictureFilenames(recipe.Pictures),
-			Tags: recipe.Tags, SourceLocale: recipe.SourceLocale, Locale: recipe.Locale, VariationOf: recipe.VariationOf,
-			FamilyID: recipe.FamilyID, TagMatches: recipe.TagMatches,
+			Tags: recipe.Tags, SourceLocale: recipe.SourceLocale, Locale: recipe.Locale,
+			FamilyID: recipe.FamilyID,
 		})
 	}
-	s.localizeTagMatches(ctx, previews, requested)
 	return previews
 }
 

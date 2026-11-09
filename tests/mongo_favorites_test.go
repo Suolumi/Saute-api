@@ -53,6 +53,7 @@ func insertTestRecipe(t *testing.T, db database.Database, ctx context.Context, a
 	id := primitive.NewObjectID()
 	_, err := db.RawDatabase().Collection("recipes").InsertOne(ctx, bson.M{
 		"_id":         id,
+		"family_id":   id,
 		"author":      authorID,
 		"title":       title,
 		"ingredients": bson.A{bson.M{"name": "flour"}},
@@ -158,7 +159,7 @@ func TestGetRecipeDocumentsBoostedPartitionsFavoritesFirst(t *testing.T) {
 
 // TestGetRecipeDocumentsFavoritesOnly guards the "My Favorites" listing mode:
 // only the exact recipes the caller favorited come back (never another
-// user's un-favorited recipes, never the un-favorited sibling in a family),
+// user's un-favorited recipes, never an un-favorited version in a family),
 // narrowed by category the same way the default listing is, and sorted
 // alphabetically by title rather than newest-first.
 func TestGetRecipeDocumentsFavoritesOnly(t *testing.T) {
@@ -173,7 +174,7 @@ func TestGetRecipeDocumentsFavoritesOnly(t *testing.T) {
 		"ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish",
 	})
 	variation := insertRecipeDoc(t, db, ctx, bson.M{
-		"author": author, "title": "Apple Cake V2", "variation_of": root,
+		"author": author, "title": "Apple Cake V2", "family_id": root,
 		"ingredients": bson.A{bson.M{"name": "flour"}}, "kind": "dish",
 	})
 	unfavorited := insertRecipeDoc(t, db, ctx, bson.M{
@@ -198,8 +199,8 @@ func TestGetRecipeDocumentsFavoritesOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), count)
 	require.Len(t, foodFavorites, 2)
-	// Flat, not family-collapsed: both the root and the variation the user
-	// favorited show up as distinct entries. Alphabetical by title: "Apple"
+	// Flat, not family-collapsed: both versions the user favorited show up
+	// as distinct entries. Alphabetical by title: "Apple"
 	// before "Zebra".
 	assert.Equal(t, variation.Hex(), foodFavorites[0].Id.Hex())
 	assert.Equal(t, root.Hex(), foodFavorites[1].Id.Hex())

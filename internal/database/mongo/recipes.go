@@ -192,122 +192,59 @@ func (c *Client) DeleteRecipeById(id string) (models.RecipeDB, error) {
 	return recipe, nil
 }
 
-// variationsLookupStage attaches each candidate's own variations (never its
-// root, never chained further) as a light `variations` array - just enough
-// for the search and tag cross-matches below, not a full recipe fetch.
-var variationsLookupStage = bson.D{{Key: "$lookup", Value: bson.D{
-	{Key: "from", Value: recipesCollection},
-	{Key: "localField", Value: "_id"},
-	{Key: "foreignField", Value: "variation_of"},
-	{Key: "as", Value: "variations"},
-	{Key: "pipeline", Value: mongo.Pipeline{{{Key: "$project", Value: bson.D{
-		{Key: "title", Value: 1}, {Key: "ingredients", Value: 1}, {Key: "tags", Value: 1},
-		{Key: "source_locale", Value: 1}, {Key: "source_hash", Value: 1},
-	}}}}},
-}}}
-
-// familyIngredientsAllStages matches when every pattern is satisfied by the
-// union of the candidate's own <fieldPrefix>.name values and every attached
-// variation's ingredients.name values (see variationsLookupStage) - a
-// per-ingredient union across the family, not "every ingredient within one
-// single recipe": a query for "flour"+"cinnamon" matches a family where the
-// root has flour and a sibling variation has cinnamon, even if no single
-// recipe in the family has both. Accepted v1 behavior (decision #3).
-func familyIngredientsAllStages(fieldPrefix string, patterns []interface{}) []bson.D {
-	return []bson.D{
-		{{Key: "$addFields", Value: bson.D{{Key: "family_ingredient_names", Value: bson.D{
-			{Key: "$reduce", Value: bson.D{
-				{Key: "input", Value: "$variations"},
-				{Key: "initialValue", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$" + fieldPrefix + ".name", bson.A{}}}}},
-				{Key: "in", Value: bson.D{{Key: "$setUnion", Value: bson.A{
-					"$$value",
-					bson.D{{Key: "$ifNull", Value: bson.A{"$$this.ingredients.name", bson.A{}}}},
-				}}}},
-			}},
-		}}}}},
-		{{Key: "$match", Value: bson.D{{Key: "family_ingredient_names", Value: bson.M{"$all": patterns}}}}},
-		{{Key: "$unset", Value: "family_ingredient_names"}},
-	}
-}
-
-// familyTagsAllStages keeps a family when its root or any single variation
-// carries every tag (unlike familyIngredientsAllStages, never a union across
-// the family: a diet filter must be met by one recipe). When only variations
-// match, they're kept in "tag_matches" for the card's hint; it's empty when
-// the root itself matches.
-func familyTagsAllStages(tags []string) []bson.D {
-	literal := bson.D{{Key: "$literal", Value: tags}}
-	carriesAll := func(field string) bson.D {
-		return bson.D{{Key: "$setIsSubset", Value: bson.A{literal, bson.D{{Key: "$ifNull", Value: bson.A{field, bson.A{}}}}}}}
-	}
-	return []bson.D{
-		{{Key: "$addFields", Value: bson.D{
-			{Key: "tag_root_match", Value: carriesAll("$tags")},
-			{Key: "tag_matches", Value: bson.D{{Key: "$map", Value: bson.D{
-				{Key: "input", Value: bson.D{{Key: "$filter", Value: bson.D{
-					{Key: "input", Value: "$variations"},
-					{Key: "cond", Value: carriesAll("$$this.tags")},
-				}}}},
-				{Key: "in", Value: bson.D{
-					{Key: "_id", Value: "$$this._id"}, {Key: "title", Value: "$$this.title"},
-					{Key: "source_locale", Value: "$$this.source_locale"}, {Key: "source_hash", Value: "$$this.source_hash"},
-				}},
-			}}}},
-		}}},
-		{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{
-			bson.D{{Key: "tag_root_match", Value: true}},
-			bson.D{{Key: "tag_matches.0", Value: bson.D{{Key: "$exists", Value: true}}}},
-		}}}}},
-		{{Key: "$addFields", Value: bson.D{{Key: "tag_matches", Value: bson.D{{Key: "$cond", Value: bson.A{
-			"$tag_root_match", bson.A{}, "$tag_matches",
-		}}}}}}},
-		{{Key: "$unset", Value: "tag_root_match"}},
-	}
-}
-
 // isFamilyListingRequest reports whether parameters selects the default,
-// family-collapsed discovery listing (as opposed to variation_of/
-// own_recipes/favorites_only/flat, which are flat). Shared between
-// buildRecipeFilterPipeline and its callers, which need to know whether the
-// pipeline still carries a "variations" array (see recipeCountStage) before
-// buildRecipeFilterPipeline's caller unsets it.
+// family-collapsed discovery listing (as opposed to family/own_recipes/
+// favorites_only/flat, which are flat).
 func isFamilyListingRequest(parameters models.GetRecipesRequest) bool {
-	return parameters.VariationOf == "" && !parameters.OwnRecipes && !parameters.FavoritesOnly && !parameters.Flat
+	return parameters.Family == "" && !parameters.OwnRecipes && !parameters.FavoritesOnly && !parameters.Flat
+}
+
+// familyCollapseStages keeps, per family, the newest recipe that survived the
+// filters before it. "matched" counts the family's matching recipes, for
+// recipeCountStage; callers $unset it before fetching items.
+var familyCollapseStages = []bson.D{
+	{{Key: "$sort", Value: bson.D{{Key: "_id", Value: -1}}}},
+	{{Key: "$group", Value: bson.D{
+		// A recipe missing family_id (only possible before
+		// MigrateRecipeFamilies ran) stays its own family.
+		{Key: "_id", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$family_id", "$_id"}}}},
+		{Key: "doc", Value: bson.D{{Key: "$first", Value: "$$ROOT"}}},
+		{Key: "matched", Value: bson.D{{Key: "$sum", Value: 1}}},
+	}}},
+	{{Key: "$replaceRoot", Value: bson.D{{Key: "newRoot", Value: bson.D{{Key: "$mergeObjects", Value: bson.A{
+		"$doc", bson.D{{Key: "matched", Value: "$matched"}},
+	}}}}}}},
 }
 
 // buildRecipeFilterPipeline returns the $lookup(author) plus every filter
 // stage for parameters, before any count/sort/skip/limit stage is appended.
-// On the family-collapsed listing (isFamilyListingRequest), the returned
-// pipeline still carries each surviving root's "variations" array - callers
-// must $unset it themselves before fetching items, but may use it first (via
-// recipeCountStage) to count every individual recipe folded into a family,
-// not just the family itself.
+// On the family-collapsed listing (isFamilyListingRequest), the filters apply
+// per recipe, then each family collapses to its newest matching recipe, which
+// still carries "matched" (see familyCollapseStages).
 func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 	var pipeline []bson.D
 
 	pipeline = append(pipeline, recipeAuthorPipeline...)
 
 	if parameters.ExcludeFamily != "" {
-		// Used by the "add recipe as ingredient" picker so a recipe can't
-		// offer itself as a reference target. UX nicety only; nothing
-		// enforces it on write.
 		if excludeID, err := primitive.ObjectIDFromHex(parameters.ExcludeFamily); err == nil {
-			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: bson.D{{Key: "$ne", Value: excludeID}}}}}})
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "family_id", Value: bson.D{{Key: "$ne", Value: excludeID}}}}}})
 		}
 	}
 
 	isFamilyListing := isFamilyListingRequest(parameters)
 
 	switch {
-	case parameters.VariationOf != "":
-		// List only the variations of the given recipe id, never the root.
-		if variationOfID, err := primitive.ObjectIDFromHex(parameters.VariationOf); err == nil {
-			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "variation_of", Value: variationOfID}}}})
+	case parameters.Family != "":
+		familyID, err := primitive.ObjectIDFromHex(parameters.Family)
+		if err != nil {
+			familyID = primitive.NilObjectID
 		}
+		pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "family_id", Value: familyID}}}})
 	case parameters.FavoritesOnly:
 		// "My Favorites": flat, exact-recipe listing narrowed to whatever
 		// FavoritedByUserID has favorited - never family-resolved, unlike the
-		// boosting path's favoritedRecipeIDs, since the exact variation
+		// boosting path's favoritedFamilyIDs, since the exact version
 		// favorited is what should show up here.
 		if userObjectID, err := primitive.ObjectIDFromHex(parameters.FavoritedByUserID); err == nil {
 			pipeline = append(pipeline, bson.D{{Key: "$lookup", Value: bson.D{
@@ -336,21 +273,15 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: bson.D{{Key: "$ne", Value: models.Diy}}}}}})
 		}
 	case parameters.OwnRecipes:
-		// "My Recipes"/admin moderation: no collapsing - every recipe
-		// matching Author is listed flatly, roots and variations alike (see
-		// decision #4). Category is otherwise agnostic here, except an
-		// explicit "diy" narrows to just DIY entries - the admin
-		// back-office's DIY tab reuses this same flat listing with
-		// category=diy rather than needing its own pipeline branch.
+		// "My Recipes"/admin moderation: every recipe matching Author, never
+		// collapsed. Category is otherwise agnostic here, except an explicit
+		// "diy" narrows to just DIY entries - the admin back-office's DIY tab
+		// reuses this same flat listing with category=diy.
 		if parameters.Category == models.Diy {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: models.Diy}}}})
 		}
 	default:
-		// Default public discovery listing: collapse each family to its
-		// root, unless Flat asks for every recipe.
-		if !parameters.Flat {
-			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "variation_of", Value: bson.D{{Key: "$exists", Value: false}}}}}})
-		}
+		// Default public discovery listing (collapsed unless Flat).
 		if parameters.Category == models.Diy {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: models.Diy}}}})
 		} else {
@@ -360,34 +291,6 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 			// GetRecipesRequest.Category's doc comment.
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "category", Value: bson.D{{Key: "$ne", Value: models.Diy}}}}}})
 		}
-	}
-
-	// A title/ingredient search on the default discovery listing also
-	// matches into each candidate's own variations, surfacing the root when
-	// only a variation's text matches (decision #3) - never applied to the
-	// variation_of/own_recipes listings above, which aren't being viewed as
-	// "families" in that sense.
-	includeVariationsMatch := isFamilyListing &&
-		(parameters.Title != "" || len(parameters.Ingredients) > 0)
-	if isFamilyListing {
-		// Also needed (beyond the search cross-match above) to compute
-		// family_sort_id below: a new variation should bump its root back to
-		// the top of the newest-first default listing, so the variation
-		// actually gets seen instead of sitting undiscoverable under
-		// whenever the root itself was created.
-		pipeline = append(pipeline, variationsLookupStage)
-		pipeline = append(pipeline, bson.D{{Key: "$addFields", Value: bson.D{
-			{Key: "family_sort_id", Value: bson.D{{Key: "$max", Value: bson.D{{Key: "$concatArrays", Value: bson.A{
-				bson.A{"$_id"}, "$variations._id",
-			}}}}}},
-		}}})
-	}
-
-	if parameters.Popular {
-		// Only needed for the "Most Popular" sort (buildRecipeSortStages/
-		// favoritesSortStages) - skipped otherwise to avoid the extra $lookup
-		// on every listing.
-		pipeline = append(pipeline, popularityCountStages(isFamilyListing)...)
 	}
 
 	if parameters.SearchLocale != "" && (parameters.Title != "" || len(parameters.Ingredients) > 0) {
@@ -429,36 +332,18 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 			}}}},
 		}}})
 		if parameters.Title != "" {
-			titleMatch := bson.D{{Key: "search_title", Value: primitive.Regex{Pattern: regexp.QuoteMeta(parameters.Title), Options: "i"}}}
-			if includeVariationsMatch {
-				pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{
-					titleMatch,
-					bson.D{{Key: "variations.title", Value: primitive.Regex{Pattern: regexp.QuoteMeta(parameters.Title), Options: "i"}}},
-				}}}}})
-			} else {
-				pipeline = append(pipeline, bson.D{{Key: "$match", Value: titleMatch}})
-			}
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "search_title", Value: primitive.Regex{Pattern: regexp.QuoteMeta(parameters.Title), Options: "i"}}}}})
 		}
 		if len(parameters.Ingredients) > 0 {
-			ingredients := make([]interface{}, 0, len(parameters.Ingredients))
-			for _, ingredient := range parameters.Ingredients {
-				ingredients = append(ingredients, primitive.Regex{Pattern: regexp.QuoteMeta(ingredient), Options: "i"})
-			}
-			if includeVariationsMatch {
-				pipeline = append(pipeline, familyIngredientsAllStages("search_ingredients", ingredients)...)
-			} else {
-				pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "search_ingredients.name", Value: bson.M{"$all": ingredients}}}}})
-			}
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "search_ingredients.name", Value: bson.M{"$all": ingredientPatterns(parameters.Ingredients)}}}}})
 		}
 		pipeline = append(pipeline, bson.D{{Key: "$unset", Value: bson.A{"search_translation", "search_has_translation", "search_own_locale", "search_title", "search_ingredients"}}})
-	} else if parameters.Title != "" {
-		if includeVariationsMatch {
-			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{
-				bson.D{{Key: "title", Value: primitive.Regex{Pattern: regexp.QuoteMeta(parameters.Title), Options: "i"}}},
-				bson.D{{Key: "variations.title", Value: primitive.Regex{Pattern: regexp.QuoteMeta(parameters.Title), Options: "i"}}},
-			}}}}})
-		} else {
+	} else {
+		if parameters.Title != "" {
 			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "title", Value: primitive.Regex{Pattern: regexp.QuoteMeta(parameters.Title), Options: "i"}}}}})
+		}
+		if len(parameters.Ingredients) > 0 {
+			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "ingredients.name", Value: bson.M{"$all": ingredientPatterns(parameters.Ingredients)}}}}})
 		}
 	}
 	if parameters.Author != "" {
@@ -467,54 +352,44 @@ func buildRecipeFilterPipeline(parameters models.GetRecipesRequest) []bson.D {
 	if parameters.Kind != "" {
 		pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "kind", Value: primitive.Regex{Pattern: regexp.QuoteMeta(string(parameters.Kind)), Options: "i"}}}}})
 	}
-
 	if len(parameters.Tags) > 0 {
-		if isFamilyListing {
-			pipeline = append(pipeline, familyTagsAllStages(parameters.Tags)...)
-		} else {
-			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "tags", Value: bson.M{"$all": parameters.Tags}}}}})
-		}
+		pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "tags", Value: bson.M{"$all": parameters.Tags}}}}})
 	}
 
-	if len(parameters.Ingredients) > 0 && parameters.SearchLocale == "" {
-		ingredients := make([]interface{}, 0, len(parameters.Ingredients))
-		for _, ingredient := range parameters.Ingredients {
-			ingredients = append(ingredients, primitive.Regex{Pattern: regexp.QuoteMeta(ingredient), Options: "i"})
-		}
-		if includeVariationsMatch {
-			pipeline = append(pipeline, familyIngredientsAllStages("ingredients", ingredients)...)
-		} else {
-			pipeline = append(pipeline, bson.D{{Key: "$match", Value: bson.D{{Key: "ingredients.name", Value: bson.M{"$all": ingredients}}}}})
-		}
+	if isFamilyListing {
+		pipeline = append(pipeline, familyCollapseStages...)
 	}
 
-	// "variations" is left in place here (unlike every other lookup this
-	// function unsets right after use) - recipeCountStage still needs it to
-	// count every recipe folded into a family, not just the family. Callers
-	// must $unset it themselves once they're done counting, before fetching
-	// items.
+	if parameters.Popular {
+		// Only needed for the "Most Popular" sort - skipped otherwise to
+		// avoid the extra $lookup on every listing.
+		pipeline = append(pipeline, popularityCountStages(isFamilyListing)...)
+	}
 
 	return pipeline
 }
 
+// ingredientPatterns turns ingredient search terms into case-insensitive
+// literal regexes for an $all match.
+func ingredientPatterns(terms []string) []interface{} {
+	patterns := make([]interface{}, 0, len(terms))
+	for _, term := range terms {
+		patterns = append(patterns, primitive.Regex{Pattern: regexp.QuoteMeta(term), Options: "i"})
+	}
+	return patterns
+}
+
 // recipeCountStage returns the aggregation stage that reduces a filtered
 // pipeline down to a single {total: N} document (or no document at all if
-// nothing matched, same as $count). On the default family-collapsed listing,
-// a plain $count would only count surviving family-root documents - e.g. 48
-// families - even though those 48 cards fold in 5 more variations, i.e. 53
-// actual recipes; that undercounts whatever the caller reports as "N recipes
-// found". Summing 1 + size(variations) per root instead counts every
-// individual recipe. Must run against a pipeline that still carries
-// "variations" (i.e. before buildRecipeFilterPipeline's caller unsets it).
+// nothing matched, same as $count). On the family-collapsed listing it sums
+// "matched", so the total counts every matching recipe, not each family once.
 func recipeCountStage(isFamilyListing bool) bson.D {
 	if !isFamilyListing {
 		return bson.D{{Key: "$count", Value: "total"}}
 	}
 	return bson.D{{Key: "$group", Value: bson.D{
 		{Key: "_id", Value: nil},
-		{Key: "total", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$add", Value: bson.A{
-			1, bson.D{{Key: "$size", Value: "$variations"}},
-		}}}}}},
+		{Key: "total", Value: bson.D{{Key: "$sum", Value: "$matched"}}},
 	}}}
 }
 
@@ -524,19 +399,13 @@ func recipeCountStage(isFamilyListing bool) bson.D {
 // QuickestTotal), a sort by the actual time ascending; or, for "Most Popular"
 // (Popular), a sort by popularity_count (computed in buildRecipeFilterPipeline)
 // descending - ties broken newest-first in every one of these filtered cases.
-// On the default family-collapsed listing, "newest" is family_sort_id (see
-// buildRecipeFilterPipeline) rather than the root's own _id, so a fresh
-// variation promotes its whole family back to the top instead of sitting
-// buried under however old the root is.
+// On the family-collapsed listing, a family sorts by its representative.
 func buildRecipeSortStages(parameters models.GetRecipesRequest) []bson.D {
 	if parameters.FavoritesOnly {
 		return favoritesSortStages(parameters)
 	}
 
-	sortKey := "_id"
-	if isFamilyListingRequest(parameters) {
-		sortKey = "family_sort_id"
-	}
+	const sortKey = "_id"
 
 	if parameters.Popular {
 		return []bson.D{{{Key: "$sort", Value: bson.D{
@@ -603,30 +472,23 @@ func quickestSortStage(parameters models.GetRecipesRequest) (stages []bson.D, fi
 }
 
 // popularityCountStages computes popularity_count, the metric behind the
-// "Most Popular" sort (buildRecipeSortStages/favoritesSortStages), by
-// $lookup into the favorites collection. On the default family-collapsed
-// listing (isFamilyListing), it's the number of distinct people who
-// favorited the family - root or any variation, deduplicated the same way
-// recipe_service.decorateFamilyFavorite counts it for display - so sort
-// order matches what's shown. Every flat listing this actually reaches
-// through the filter UI (own_recipes, favorites_only) instead gets each
-// recipe's own individual count, matching decorateFavorite/List's own choice
-// there (decision #4). The internal variation_of listing (never exposed to
-// Popular by the site) also falls into this per-recipe branch; its displayed
-// count is family-aggregate instead, but since every result there already
-// shares one root/family, sorting by the family count would be a no-op tie
-// anyway.
+// "Most Popular" sort. On the family-collapsed listing it's the number of
+// distinct people who favorited any version of the representative's family,
+// matching what recipe_service.decorateFamilyFavorite displays. Every flat
+// listing gets each recipe's own count instead.
 func popularityCountStages(isFamilyListing bool) []bson.D {
 	if isFamilyListing {
 		return []bson.D{
-			{{Key: "$addFields", Value: bson.D{
-				{Key: "family_ids", Value: bson.D{{Key: "$concatArrays", Value: bson.A{
-					bson.A{"$_id"}, "$variations._id",
-				}}}},
+			{{Key: "$lookup", Value: bson.D{
+				{Key: "from", Value: recipesCollection},
+				{Key: "localField", Value: "family_id"},
+				{Key: "foreignField", Value: "family_id"},
+				{Key: "as", Value: "family_members"},
+				{Key: "pipeline", Value: mongo.Pipeline{{{Key: "$project", Value: bson.D{{Key: "_id", Value: 1}}}}}},
 			}}},
 			{{Key: "$lookup", Value: bson.D{
 				{Key: "from", Value: favoritesCollection},
-				{Key: "localField", Value: "family_ids"},
+				{Key: "localField", Value: "family_members._id"},
 				{Key: "foreignField", Value: "recipe"},
 				{Key: "as", Value: "family_favorites"},
 			}}},
@@ -637,7 +499,7 @@ func popularityCountStages(isFamilyListing bool) []bson.D {
 					{Key: "in", Value: bson.D{{Key: "$setUnion", Value: bson.A{"$$value", "$$this"}}}},
 				}}}}}},
 			}}},
-			{{Key: "$unset", Value: bson.A{"family_ids", "family_favorites"}}},
+			{{Key: "$unset", Value: bson.A{"family_members", "family_favorites"}}},
 		}
 	}
 	return []bson.D{
@@ -757,7 +619,7 @@ func (c *Client) GetRecipeDocuments(parameters models.GetRecipesRequest) ([]mode
 	}
 
 	if isFamilyListing {
-		pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "variations"}})
+		pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "matched"}})
 	}
 	pipeline = append(pipeline, buildRecipeSortStages(parameters)...)
 
@@ -786,7 +648,7 @@ func (c *Client) GetRecipeDocuments(parameters models.GetRecipesRequest) ([]mode
 const boostedFavoritesCap = 500
 
 // GetRecipeDocumentsBoosted partitions the recipes matching parameters into
-// every one userID has favorited (returned in full, up to boostedFavoritesCap,
+// every one whose family userID has favorited (returned in full, up to boostedFavoritesCap,
 // only on the Offset == 0 call) and the remaining non-favorited matches
 // (paginated per parameters.Offset/Limit). Offset addresses the non-favorited
 // segment only: a caller pages through it by incrementing Offset over the
@@ -796,7 +658,7 @@ const boostedFavoritesCap = 500
 // most the non-favorited tail once, instead of reshuffling everything above
 // the caller's current position.
 func (c *Client) GetRecipeDocumentsBoosted(ctx context.Context, userID string, parameters models.GetRecipesRequest) ([]models.Recipe, []models.Recipe, int64, error) {
-	favoriteIDs, err := c.favoritedRecipeIDs(ctx, userID)
+	favoriteFamilyIDs, err := c.favoritedFamilyIDs(ctx, userID)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -824,7 +686,7 @@ func (c *Client) GetRecipeDocumentsBoosted(ctx context.Context, userID string, p
 	fetchMatching := func(extra bson.D, skip, limit int) ([]models.Recipe, error) {
 		pipeline := append(slices.Clone(base), extra)
 		if isFamilyListing {
-			pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "variations"}})
+			pipeline = append(pipeline, bson.D{{Key: "$unset", Value: "matched"}})
 		}
 		pipeline = append(pipeline, sortStages...)
 		if skip > 0 {
@@ -838,8 +700,8 @@ func (c *Client) GetRecipeDocumentsBoosted(ctx context.Context, userID string, p
 		return c.transformRecipe(cursor)
 	}
 
-	inFavorites := bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: bson.D{{Key: "$in", Value: favoriteIDs}}}}}}
-	notInFavorites := bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: bson.D{{Key: "$nin", Value: favoriteIDs}}}}}}
+	inFavorites := bson.D{{Key: "$match", Value: bson.D{{Key: "family_id", Value: bson.D{{Key: "$in", Value: favoriteFamilyIDs}}}}}}
+	notInFavorites := bson.D{{Key: "$match", Value: bson.D{{Key: "family_id", Value: bson.D{{Key: "$nin", Value: favoriteFamilyIDs}}}}}}
 
 	favoritedCount, err := countMatching(inFavorites)
 	if err != nil {
