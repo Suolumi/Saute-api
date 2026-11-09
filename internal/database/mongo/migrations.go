@@ -20,6 +20,7 @@ func (c *Client) EnsureIndexes(ctx context.Context) error {
 	if _, err := c.db.Collection(recipesCollection).Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "author", Value: 1}, {Key: "_id", Value: -1}}, Options: options.Index().SetName("recipes_author_cursor")},
 		{Keys: bson.D{{Key: "variation_of", Value: 1}}, Options: options.Index().SetSparse(true).SetName("recipes_variation_of")},
+		{Keys: bson.D{{Key: "family_id", Value: 1}, {Key: "_id", Value: -1}}, Options: options.Index().SetName("recipes_family_id")},
 		{Keys: bson.D{{Key: "ingredients.recipe_ref", Value: 1}}, Options: options.Index().SetSparse(true).SetName("recipes_ingredients_recipe_ref")},
 		{Keys: bson.D{{Key: "tags", Value: 1}}, Options: options.Index().SetName("recipes_tags")},
 	}); err != nil {

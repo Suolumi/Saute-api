@@ -71,6 +71,10 @@ func New(cfg *config.Config) (*Handlers, error) {
 		_ = db.Close(context.Background())
 		return nil, err
 	}
+	if err := db.MigrateRecipeFamilies(startupCtx); err != nil {
+		_ = db.Close(context.Background())
+		return nil, err
+	}
 	if err := db.MigrateFoods(startupCtx); err != nil {
 		_ = db.Close(context.Background())
 		return nil, err

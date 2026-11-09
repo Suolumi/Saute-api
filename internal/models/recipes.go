@@ -210,6 +210,9 @@ type CreateRecipe struct {
 	// with a raw reflect.Value.Set that panics on a type mismatch. A plain
 	// hex string unmarshals into this directly, same as any other id field.
 	VariationOf *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
+	// FamilyID is set by the service, never by clients. Same type as
+	// RecipeDB.FamilyID for DupStruct.
+	FamilyID *primitive.ObjectID `bson:"family_id,omitempty" json:"-"`
 }
 
 type RecipeDB struct {
@@ -233,6 +236,9 @@ type RecipeDB struct {
 	// VariationOf is nil for a root/original recipe, or the root recipe's id
 	// for a variation - always flattened, never chained.
 	VariationOf *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
+	// FamilyID is shared by every version of a recipe; a standalone recipe
+	// is its own family.
+	FamilyID *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
 }
 
 // Recipe has bson fields to unfold the author when getting the document
@@ -259,6 +265,7 @@ type Recipe struct {
 	Locale       string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	SourceHash   string              `bson:"source_hash,omitempty" json:"-"`
 	VariationOf  *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
+	FamilyID     *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
 	// TagMatches is only set by a tag-filtered family listing; see
 	// RecipePreview.TagMatches.
 	TagMatches []TagMatch `bson:"tag_matches,omitempty" json:"-"`
@@ -319,6 +326,7 @@ func (r *Recipe) ToRecipeDB() RecipeDB {
 		Locale:          r.Locale,
 		SourceHash:      r.SourceHash,
 		VariationOf:     r.VariationOf,
+		FamilyID:        r.FamilyID,
 	}
 }
 
@@ -338,6 +346,7 @@ type RecipePreview struct {
 	SourceLocale    string              `bson:"source_locale,omitempty" json:"source_locale,omitempty"`
 	Locale          string              `bson:"locale,omitempty" json:"locale,omitempty"`
 	VariationOf     *primitive.ObjectID `bson:"variation_of,omitempty" json:"variation_of,omitempty"`
+	FamilyID        *primitive.ObjectID `bson:"family_id,omitempty" json:"family_id,omitempty"`
 	// TagMatches lists the variations that satisfy a tag filter when the
 	// root itself doesn't, so the card can point to them.
 	TagMatches     []TagMatch `bson:"-" json:"tag_matches,omitempty"`

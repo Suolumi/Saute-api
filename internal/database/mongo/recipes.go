@@ -63,6 +63,11 @@ func (c *Client) CreateRecipe(authorId string, infos *models.CreateRecipe) (mode
 
 	recipe := utils.DupStruct[models.RecipeDB](infos)
 	recipe.Author = &authorObjectId
+	if recipe.FamilyID == nil {
+		id := primitive.NewObjectID()
+		recipe.Id = &id
+		recipe.FamilyID = &id
+	}
 
 	cursor, err := c.db.Collection(recipesCollection).InsertOne(context.TODO(), recipe)
 	if err != nil {
