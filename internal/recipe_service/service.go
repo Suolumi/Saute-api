@@ -1317,7 +1317,7 @@ func (s *Service) ListDetailedForUser(ctx context.Context, userID, cursor string
 
 // Search returns a page of full recipes (not previews) matching parameters,
 // across every user - not just an author-scoped listing - for MCP's
-// search_recipes tool to discover a fork target for create_recipe's
+// search_recipes tool to discover a version to join with create_recipe's
 // variation_of. It reuses GetRecipeDocuments' family-collapsed
 // filter/sort pipeline (the same one the public REST listing uses), driven
 // by an offset rather than parameters.Offset/Limit directly, so the MCP tool

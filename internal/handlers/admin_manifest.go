@@ -98,7 +98,7 @@ var adminRouteManifest = []models.AdminRouteDescriptor{
 		Label: "Detach recipe from family", Description: "Remove a recipe from its family; it becomes standalone again.",
 		Destructive: true,
 		Params: []models.AdminRouteParam{
-			{Name: "id", In: "path", Type: "string", Picker: "recipe", Required: true, Label: "Variation"},
+			{Name: "id", In: "path", Type: "string", Picker: "recipe", Required: true, Label: "Recipe"},
 		},
 	},
 	{
