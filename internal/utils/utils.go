@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 func IsEmailValid(email string) bool {
@@ -15,9 +16,12 @@ func IsEmailValid(email string) bool {
 	return regex.MatchString(email)
 }
 
+// PasswordRules describes what IsPasswordValid requires. The site checks the same rules.
+const PasswordRules = "Password must contain at least 12 characters, 1 number and 1 special character"
+
 // IsPasswordValid regex doesn't compile here because of RE2 format instead of PCRE
 func IsPasswordValid(password string) bool {
-	length, numbers, specials := 10, 1, 1
+	length, numbers, specials := 12, 1, 1
 
 	for _, c := range password {
 		if c >= '0' && c <= '9' {
@@ -26,7 +30,7 @@ func IsPasswordValid(password string) bool {
 			specials--
 		}
 	}
-	return len(password) >= length && numbers <= 0 && specials <= 0
+	return utf8.RuneCountInString(password) >= length && numbers <= 0 && specials <= 0
 }
 
 func HashPassword(password string) (string, error) {

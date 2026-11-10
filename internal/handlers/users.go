@@ -67,7 +67,7 @@ func (h *Handlers) UpdateMe(c echo.Context) error {
 		return errorResponse(http.StatusNotAcceptable, "Must be a valid email", nil, c)
 	}
 	if user.Password != "" && !utils.IsPasswordValid(user.Password) {
-		return errorResponse(http.StatusNotAcceptable, "Password must contain at least 10 characters, 1 number and 1 special character", nil, c)
+		return errorResponse(http.StatusNotAcceptable, utils.PasswordRules, nil, c)
 	}
 
 	userdb := utils.DupStruct[models.UserDB](&user)

@@ -54,3 +54,18 @@ func TestBindQuerySliceAbsent(t *testing.T) {
 		t.Errorf("Ingredients = %v, want nil", body.Ingredients)
 	}
 }
+
+func TestIsPasswordValid(t *testing.T) {
+	cases := map[string]bool{
+		"abcdefghi1!":  false, // 11 characters
+		"abcdefghij1!": true,
+		"abcdefghijk!": false, // no number
+		"abcdefghijk1": false, // no special character
+		"ééééééééé1!":  false, // 11 characters, more bytes
+	}
+	for password, want := range cases {
+		if got := IsPasswordValid(password); got != want {
+			t.Errorf("IsPasswordValid(%q) = %v, want %v", password, got, want)
+		}
+	}
+}

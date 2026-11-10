@@ -93,7 +93,7 @@ func (h *Handlers) Register(c echo.Context) error {
 		return errorResponse(http.StatusNotAcceptable, "Must be a valid email", nil, c)
 	}
 	if !utils.IsPasswordValid(user.Password) {
-		return errorResponse(http.StatusNotAcceptable, "Password must contain at least 10 characters, 1 number and 1 special character", nil, c)
+		return errorResponse(http.StatusNotAcceptable, utils.PasswordRules, nil, c)
 	}
 
 	// Check if user already exists
@@ -190,7 +190,7 @@ func (h *Handlers) ResetPassword(c echo.Context) error {
 
 	err = c.Bind(&data)
 	if err != nil || !utils.IsPasswordValid(data.Password) {
-		return errorResponse(http.StatusNotAcceptable, "Password must contain at least 10 characters, 1 number and 1 special character", err, c)
+		return errorResponse(http.StatusNotAcceptable, utils.PasswordRules, err, c)
 	}
 
 	if _, err = h.db.UpdateUserById(jwt.UserId, models.UserDB{
